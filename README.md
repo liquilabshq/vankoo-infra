@@ -21,7 +21,7 @@ También puedes instalar temas para mejorar la experiencia de usuario, como el t
 
 Se incluye un archivo `.env.example` con las variables de entorno necesarias para levantar los servicios de Vankoo. Deberás crear un archivo `.env` en la raíz del repositorio y copiar las variables de entorno del archivo `.env.example` al archivo `.env`. Luego, puedes modificar las variables de entorno según tus necesidades.
 
-Ten en cuenta que el archivo `docker-compose.yml` ya tiene variables de entorno por defecto, por lo que no será estrictamente necesario configurar el archivo `.env` para levantar los servicios de Vankoo, pero es recomendable hacerlo para tener un mejor control sobre las variables de entorno y para evitar posibles conflictos con otras aplicaciones que puedan estar usando las mismas variables de entorno.
+Ten en cuenta que el archivo `docker-compose.yaml` ya tiene variables de entorno por defecto, por lo que no será estrictamente necesario configurar el archivo `.env` para levantar los servicios de Vankoo, pero es recomendable hacerlo para tener un mejor control sobre las variables de entorno y para evitar posibles conflictos con otras aplicaciones que puedan estar usando las mismas variables de entorno.
 
 ## Usar los scripts
 
@@ -63,10 +63,10 @@ Para crear un nuevo datasource y conectarse a las bases de datos levantadas en d
 4. Configura la conexión con los siguientes datos:
    - Name: te sugiero usar la siguiente convención: `{tipo-de-bd}-{microservicio}-docker-{puerto}` (ejemplo: `postgresql-iam-docker-5432`).
    - Host: localhost
-   - Port: el puerto que corresponda según el tipo de base de datos y el microservicio (puedes ver los puertos en el archivo `docker-compose.yml` o en tus variables de entorno).
-   - User: el usuario que corresponda según el tipo de base de datos y el microservicio (puedes ver los usuarios en el archivo `docker-compose.yml` o en tus variables de entorno).
-   - Password: la contraseña que corresponda según el tipo de base de datos y el microservicio (puedes ver las contraseñas en el archivo `docker-compose.yml` o en tus variables de entorno).
-   - Database: el nombre de la base de datos que corresponda según el tipo de base de datos y el microservicio (puedes ver los nombres de las bases de datos en el archivo `docker-compose.yml` o en tus variables de entorno).
+   - Port: el puerto que corresponda según el tipo de base de datos y el microservicio (puedes ver los puertos en el archivo `docker-compose.yaml` o en tus variables de entorno).
+   - User: el usuario que corresponda según el tipo de base de datos y el microservicio (puedes ver los usuarios en el archivo `docker-compose.yaml` o en tus variables de entorno).
+   - Password: la contraseña que corresponda según el tipo de base de datos y el microservicio (puedes ver las contraseñas en el archivo `docker-compose.yaml` o en tus variables de entorno).
+   - Database: el nombre de la base de datos que corresponda según el tipo de base de datos y el microservicio (puedes ver los nombres de las bases de datos en el archivo `docker-compose.yaml` o en tus variables de entorno).
 5. Haz clic en "Test Connection" para verificar que la conexión se estableció correctamente.
 6. Si la conexión es exitosa, haz clic en "Apply" y luego en "OK" para guardar el datasource.
 
@@ -74,4 +74,4 @@ Para crear un nuevo datasource y conectarse a las bases de datos levantadas en d
 
 El resto de carpetas (`azure`, `database` y `postman`) no se usan aún, se hablará luego de eso.
 
-Los servicios restantes del `docker-compose.yml` se irán agregando a medida que vayamos avanzando.
+Los servicios restantes del `docker-compose.yaml` se irán agregando a medida que vayamos avanzando.
