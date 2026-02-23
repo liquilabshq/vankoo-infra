@@ -1,11 +1,13 @@
+name: vankoo  # Este será el prefijo para redes, volúmenes y contenedores
+
 services:
   # --- Bases de datos ---
-  postgres-iam:
+  iam-db-postgres:
     image: postgres:15 # Versión 15 estable
-    networks:
-      - vankoo-network
+    networks: # Sirve para conectar este servicio con otros dentro de la misma red, permitiendo que se comuniquen entre sí usando los nombres de servicio como hostnames
+      - main-network
     volumes:
-      - postgres_iam_data:/var/lib/postgresql/data
+      - iam-db-data:/var/lib/postgresql/data # La izquierda significa el nombre del volumen, la derecha es la ruta dentro del contenedor donde se almacenan los datos de Postgres
     environment:
       POSTGRES_DB: ${IAM_DB_NAME:-vankoo_iam_db_dev}
       POSTGRES_USER: ${IAM_DB_USER:-admin}
@@ -13,33 +15,35 @@ services:
     ports:
       - "${IAM_DB_PORT:-5432}:5432"
 
-  mongodb-invoice:
+  invoicing-db-mongo:
     image: mongo:7.0
     networks:
-      - vankoo-network
+      - main-network
     volumes:
-      - mongo_invoice_data:/data/db
+      - invoicing-db-data:/data/db
     environment:
-      MONGO_INITDB_DATABASE: ${INVOICE_DB_NAME:-vankoo_invoice_db_dev}
-      MONGO_INITDB_ROOT_USERNAME: ${INVOICE_DB_USER:-admin}
-      MONGO_INITDB_ROOT_PASSWORD: ${INVOICE_DB_PASSWORD:-password}
+      MONGO_INITDB_DATABASE: ${INVOICING_DB_NAME:-vankoo_invoicing_db_dev}
+      MONGO_INITDB_ROOT_USERNAME: ${INVOICING_DB_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${INVOICING_DB_PASSWORD:-password}
     ports:
-      - "${INVOICE_DB_PORT:-27017}:27017"
+      - "${INVOICING_DB_PORT:-27017}:27017"
 
-  redis-finance:
+  finance-cache-redis:
     image: redis:7.4.7-alpine
     networks:
-      - vankoo-network
+      - main-network
     volumes:
-      - redis_finance_data:/data
+      - finance-redis-data:/data
     ports:
       - "${FINANCE_REDIS_PORT:-6379}:6379"
 
   # --- MENSAJERÍA (KAFKA) ---
-  kafka:
+  kafka-broker:
     image: apache/kafka:4.1.1
     networks:
-      - vankoo-network
+      - main-network
+    volumes:
+      - kafka-data:/var/lib/kafka/data
     ports:
       - "${KAFKA_PORT:-9092}:9092"
     environment:
@@ -49,11 +53,11 @@ services:
       # Configuración de Red (Listeners)
       # 9092: Tu PC | 9094: Microservicios | 9093: Gestión interna
       KAFKA_LISTENERS: EXTERNAL://:9092,INTERNAL://:9094,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://localhost:9092,INTERNAL://kafka:9094
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://localhost:9092,INTERNAL://kafka-broker:9094
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
 
       # Configuración KRaft (Sin Zookeeper)
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-broker:9093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
 
@@ -68,25 +72,27 @@ services:
   kafka-ui:
     image: provectuslabs/kafka-ui:v0.7.2
     networks:
-      - vankoo-network
+      - main-network
     ports:
       - "${KAFKA_UI_PORT:-9000}:8080" #El puerto de la izquierda es el de tu PC, el de la derecha es el del contenedor
     environment:
       KAFKA_CLUSTERS_0_NAME: ${KAFKA_CLUSTER_NAME:-vankoo-dev-cluster}
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9094
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-broker:9094
     depends_on:
-      - kafka
+      - kafka-broker
 
   # --- DISCOVERY SERVER (Eureka) ---
   # Una vez que lo programen, lo pondrán aquí para que se levante solo
 
 # --- Definición de Redes y Volúmenes ---
 networks:
-  vankoo-network:
-    name: vankoo-network
+  main-network:
+    name: main-network
     driver: bridge
 
 volumes:
-  postgres_iam_data:
-  mongo_invoice_data:
-  redis_finance_data:
+  iam-db-data:
+  invoicing-db-data:
+  finance-redis-data:
+  kafka-data:
+    driver: local
