@@ -82,7 +82,23 @@ services:
       - kafka-broker
 
   # --- DISCOVERY SERVER (Eureka) ---
-  # Una vez que lo programen, lo pondrán aquí para que se levante solo
+  discovery-server:
+    build:
+      context: ../vankoo-discovery-server
+      dockerfile: Dockerfile
+    hostname: discovery-server
+    networks:
+      - main-network
+    ports:
+      - "8761:8761"
+    healthcheck: # Sirve para que Docker pueda verificar si el servicio está listo para recibir tráfico. Es especialmente útil para servicios que tardan en arrancar, como los basados en Java.
+      # Apuntamos al endpoint específico de readiness
+      test: ["CMD", "curl", "-f", "http://localhost:8761/actuator/health/readiness"] # Usamos el endpoint de readiness para asegurarnos de que el servicio no solo esté "vivo" sino también listo para manejar solicitudes
+      interval: 30s # Frecuencia con la que Docker realizará el health-check
+      timeout: 10s # Tiempo máximo que Docker esperará para recibir una respuesta antes de considerar el health-check como fallido
+      retries: 3 # Número de intentos fallidos antes de marcar el contenedor como no saludable
+      start_period: 20s # Tiempo de espera inicial para que el servicio arranque antes de comenzar a hacer health-checks
+    restart: unless-stopped # Política de reinicio para asegurar que el servicio se mantenga activo incluso si falla
 
 # --- Definición de Redes y Volúmenes ---
 networks:
