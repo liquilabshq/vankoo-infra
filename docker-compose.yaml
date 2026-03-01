@@ -74,6 +74,20 @@ services:
     ports:
       - "${FINANCE_REDIS_PORT:-6379}:6379"
 
+  minio:
+    image: minio/minio:latest
+    networks:
+      - main-network
+    volumes:
+      - minio-data:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_PORT:-9100}:9000"         # Puerto para la API (S3)
+      - "${MINIO_CONSOLE_PORT:-9101}:9001" # Puerto para la Consola Web
+
   # --- MENSAJERÍA (KAFKA) ---
   kafka-broker:
     image: apache/kafka:4.1.1
@@ -149,3 +163,4 @@ volumes:
   finance-redis-data:
   kafka-data:
     driver: local
+  minio-data:
