@@ -12,6 +12,7 @@ services:
     ports:
       - "${IAM_SERVICE_PORT:-8081}:8081" # El puerto de la izquierda es el de tu PC, el de la derecha es el del contenedor
     environment:
+      IAM_SERVICE_HOST: ${IAM_SERVICE_HOST:-iam-service}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRATION_DAYS: ${JWT_EXPIRATION_DAYS}
       IAM_DB_HOST: ${IAM_DB_HOST:-iam-db-postgres} # Usamos el nombre del servicio de la base de datos como hostname para la conexión
@@ -19,7 +20,8 @@ services:
       IAM_DB_NAME: ${IAM_DB_NAME:-vankoo_iam_db_dev} # Nombre de la base de datos, configurable a través de variable de entorno o 'vankoo_iam_db_dev' por defecto
       IAM_DB_USERNAME: ${IAM_DB_USERNAME:-admin} # Usuario para la base de datos, configurable a través de variable de entorno o 'admin' por defecto
       IAM_DB_PASSWORD: ${IAM_DB_PASSWORD:-password} # Contraseña para la base de datos, configurable a través de variable de entorno o 'password' por defecto
-      KAFKA_BROKER_HOST: ${KAFKA_BROKER_HOST:-kafka-broker}
+      KAFKA_HOST: ${KAFKA_HOST:-kafka-broker}
+      KAFKA_INTERNAL_PORT: ${KAFKA_INTERNAL_PORT:-9094}
       DISCOVERY_SERVER_URL: ${DISCOVERY_SERVER_URL:-http://discovery-server:8761/eureka/}
     depends_on:
       iam-db-postgres:
@@ -80,7 +82,7 @@ services:
     volumes:
       - kafka-data:/var/lib/kafka/data
     ports:
-      - "${KAFKA_PORT:-9092}:9092"
+      - "${KAFKA_EXTERNAL_PORT:-9092}:9092"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
