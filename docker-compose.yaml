@@ -1,7 +1,42 @@
 name: vankoo  # Este será el prefijo para redes, volúmenes y contenedores
 
 services:
-  # --- Bases de datos ---
+  # --- IAM Service ---
+  iam-service:
+    build:
+      context: ../vankoo-iam-service
+      dockerfile: Dockerfile
+    hostname: iam-service
+    networks:
+      - main-network
+    ports:
+      - "${IAM_SERVICE_PORT:-8081}:8081" # El puerto de la izquierda es el de tu PC, el de la derecha es el del contenedor
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION_DAYS: ${JWT_EXPIRATION_DAYS}
+      IAM_DB_HOST: ${IAM_DB_HOST:-iam-db-postgres} # Usamos el nombre del servicio de la base de datos como hostname para la conexión
+      IAM_DB_PORT: ${IAM_DB_PORT:-5432} # Puerto de la base de datos, configurable a través de variable de entorno o 5432 por defecto
+      IAM_DB_NAME: ${IAM_DB_NAME:-vankoo_iam_db_dev} # Nombre de la base de datos, configurable a través de variable de entorno o 'vankoo_iam_db_dev' por defecto
+      IAM_DB_USERNAME: ${IAM_DB_USERNAME:-admin} # Usuario para la base de datos, configurable a través de variable de entorno o 'admin' por defecto
+      IAM_DB_PASSWORD: ${IAM_DB_PASSWORD:-password} # Contraseña para la base de datos, configurable a través de variable de entorno o 'password' por defecto
+      KAFKA_BROKER_HOST: ${KAFKA_BROKER_HOST:-kafka-broker}
+      DISCOVERY_SERVER_URL: ${DISCOVERY_SERVER_URL:-http://discovery-server:8761/eureka/}
+    depends_on:
+      iam-db-postgres:
+        condition: service_started
+      kafka-broker:
+        condition: service_started
+      discovery-server:
+        condition: service_healthy # Espera a que Eureka esté listo
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8081/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s # El IAM tarda un poco más en conectar a DB y Kafka
+    restart: unless-stopped
+
+  # --- IAM Database (PostgreSQL) ---
   iam-db-postgres:
     image: postgres:15 # Versión 15 estable
     networks: # Sirve para conectar este servicio con otros dentro de la misma red, permitiendo que se comuniquen entre sí usando los nombres de servicio como hostnames
@@ -10,7 +45,7 @@ services:
       - iam-db-data:/var/lib/postgresql/data # La izquierda significa el nombre del volumen, la derecha es la ruta dentro del contenedor donde se almacenan los datos de Postgres
     environment:
       POSTGRES_DB: ${IAM_DB_NAME:-vankoo_iam_db_dev}
-      POSTGRES_USER: ${IAM_DB_USER:-admin}
+      POSTGRES_USER: ${IAM_DB_USERNAME:-admin}
       POSTGRES_PASSWORD: ${IAM_DB_PASSWORD:-password} # Usa variable o 'password' por defecto
     ports:
       - "${IAM_DB_PORT:-5432}:5432"
