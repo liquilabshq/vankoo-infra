@@ -86,7 +86,7 @@ services:
     command: server /data --console-address ":9001"
     ports:
       - "${MINIO_PORT:-9100}:9000"         # Puerto para la API (S3)
-      - "${MINIO_CONSOLE_PORT:-9101}:9001" # Puerto para la Consola Web
+      - "${MINIO_CONSOLE_PORT:-9101}:9001" # Puerto para la Consola Web, el de la izquierda es para tu Pc, el de la derecha es para el contenedor
 
   # --- MENSAJERÍA (KAFKA) ---
   kafka-broker:
