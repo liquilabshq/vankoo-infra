@@ -10,10 +10,12 @@ Se recomienda usar DataGrip para este repositorio, ya que tiene soporte para Doc
 
 Te recomiendo instalar estos plugins antes que nada:
 
+- YAML: indispensable para que DataGrip use la indentación correcta en los archivos YAML, como el `docker-compose.yaml`.
 - Docker: para poder ver los logs de los contenedores de Docker.
 - Shell Script: para poder ejecutar los scripts de shell (.sh) desde DataGrip.
 - Batch Scripts Support: para poder ejecutar los scripts de Windows (.bat) desde DataGrip.
 - .env files: para poder trabajar con archivos .env desde DataGrip.
+- Terminal: para tener una terminal integrada en DataGrip que no trae por defecto (aunque no es indispensable si prefieres una terminal externa).
 
 También puedes instalar temas para mejorar la experiencia de usuario, como el tema "Material Theme UI" o "One Dark Theme", así como iconos para los archivos, como "Material Icon Theme" o "Atom Material Icons". Esto es opcional.
 
@@ -47,7 +49,7 @@ Si estás en DataGrip, puedes ejecutar los scripts con el plugin "Shell Script" 
 - Puedes ejecutar el script `down.sh` (o `down.bat` en Windows) para eliminar los servicios. Este script eliminará los servicios de Vankoo utilizando Docker Compose.
 - También puedes usar el comando `docker compose down` en la raíz del repositorio. Esto eliminará todos los servicios de Vankoo que estén corriendo en contenedores de Docker, así como las redes y volúmenes asociados a esos servicios.
 
-> Nota: Por desgracia, noté que DataGrip no tiene terminal integrada (al menos hasta donde pude ver), así que si quieres ejecutar los comandos manualmente sin los archivos .sh o .bat, tendrás que hacerlo desde una terminal externa como PowerShell o CMD (en Windows) o Terminal (en macOS o Linux). También te sugiero descargar Warp, que es una terminal más moderna y con mejor experiencia de usuario que las terminales tradicionales, pero no es indispensable.
+> Nota: DataGrip no tiene terminal integrada, así que deberás descargar el plugin `Terminal` oficial de JetBrains si quieres ejecutar los comandos desde el IDE. En caso quieras ejecutarlos manualmente sin los archivos .sh o .bat, tendrás que hacerlo desde una terminal externa como PowerShell o CMD (en Windows) o Terminal (en macOS o Linux). También te sugiero descargar Warp, que es una terminal más moderna y con mejor experiencia de usuario que las terminales tradicionales, pero no es indispensable.
 
 ### Para ver los logs de los servicios:
 
