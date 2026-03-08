@@ -72,6 +72,8 @@ Para crear un nuevo datasource y conectarse a las bases de datos levantadas en d
 5. Haz clic en "Test Connection" para verificar que la conexión se estableció correctamente.
 6. Si la conexión es exitosa, haz clic en "Apply" y luego en "OK" para guardar el datasource.
 
+> Nota: Algunas bases de datos, como Oracle, pueden requerir configuraciones adicionales. Para ello, revisa el archivo [Conectarse a Oracle Database con Data Source](docs/guides/oracle-data-source.md) para configurar correctamente la conexión a Oracle Database en DataGrip.
+
 ## Info adicional
 
 El resto de carpetas (`azure`, `database` y `postman`) no se usan aún, se hablará luego de eso.
