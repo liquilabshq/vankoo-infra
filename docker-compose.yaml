@@ -82,7 +82,7 @@ services:
       - "${FINANCE_REDIS_PORT:-6379}:6379"
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z # Usamos una versión específica para asegurar estabilidad
     networks:
       - main-network
     volumes:
