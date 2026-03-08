@@ -72,6 +72,26 @@ services:
     ports:
       - "${INVOICING_DB_PORT:-27017}:27017"
 
+  # --- Investment Service ---
+  # ...
+
+  # --- Investment Database (Oracle) ---
+  investment-db-oracle:
+    # Usamos la imagen de gvenzl/oracle-free que es una libre de Oracle Database,
+    # ya que la imagen oficial de Oracle no es gratuita ni fácil de usar en entornos de desarrollo.
+    # Usamos "23" por ser la "23c" de Oracle, "slim" para una imagen más ligera y "faststart" para optimizar el tiempo de arranque.
+    image: gvenzl/oracle-free:23-slim-faststart
+    networks:
+      - main-network
+    volumes:
+      - investment-db-data:/opt/oracle/oradata
+    ports:
+      - "${INVESTMENT_DB_PORT:-1521}:1521"
+    environment:
+      ORACLE_PASSWORD: ${INVESTMENT_DB_MASTER_PASSWORD:-password} # El password para el admin (SYS)
+      APP_USER: ${INVESTMENT_DB_USER:-VANKOO_INVESTMENT} # El usuario que usará el Investment Service para conectarse a la base de datos
+      APP_USER_PASSWORD: ${INVESTMENT_DB_PASSWORD:-password} # La contraseña para el usuario de la aplicación
+
   finance-cache-redis:
     image: redis:7.4.7-alpine
     networks:
@@ -197,7 +217,8 @@ networks:
 volumes:
   iam-db-data:
   invoicing-db-data:
+  investment-db-data:
+  minio-data:
   finance-redis-data:
   kafka-data:
     driver: local
-  minio-data:
