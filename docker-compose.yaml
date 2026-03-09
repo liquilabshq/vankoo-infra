@@ -28,6 +28,19 @@ services:
     ports:
       - "${INVOICING_DB_PORT:-27017}:27017"
 
+  profile-db-postgres:
+    image: postgres:15
+    networks:
+      - main-network
+    volumes:
+      - profile-db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${PROFILE_DB_NAME:-vankoo_profile_db_dev}
+      POSTGRES_USER: ${PROFILE_DB_USER:-admin}
+      POSTGRES_PASSWORD: ${PROFILE_DB_PASSWORD:-password}
+    ports:
+      - "${PROFILE_DB_PORT:-5433}:5432" # Expuesto en el 5433 en tu PC local
+
   finance-cache-redis:
     image: redis:7.4.7-alpine
     networks:
@@ -74,13 +87,28 @@ services:
     networks:
       - main-network
     ports:
-      - "${KAFKA_UI_PORT:-9000}:8080" #El puerto de la izquierda es el de tu PC, el de la derecha es el del contenedor
+      #Cambie el 9000 por 8081 👇
+      - "${KAFKA_UI_PORT:-8081}:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: ${KAFKA_CLUSTER_NAME:-vankoo-dev-cluster}
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-broker:9094
     depends_on:
       - kafka-broker
 
+  # --- ALMACENAMIENTO DE OBJETOS (S3 Local) ---
+  minio-storage:
+    image: minio/minio:latest
+    networks:
+      - main-network
+    volumes:
+      - minio-data:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-password123}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"     # Puerto de la API (Para el código)
+      - "${MINIO_CONSOLE_PORT:-9001}:9001" # Puerto de la Consola Web (UI)
+    command: server /data --console-address ":9001"
   # --- DISCOVERY SERVER (Eureka) ---
   # Una vez que lo programen, lo pondrán aquí para que se levante solo
 
@@ -96,3 +124,5 @@ volumes:
   finance-redis-data:
   kafka-data:
     driver: local
+  profile-db-data:
+  minio-data:
