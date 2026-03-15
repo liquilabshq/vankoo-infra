@@ -9,6 +9,8 @@ services:
     hostname: iam-service
     networks:
       - main-network
+    # En producción, no se debería exponer el puerto del IAM directamente al exterior, pero para desarrollo es útil para hacer pruebas manuales con Postman o el navegador.
+    # En producción, se accedería a través del API Gateway.
     ports:
       - "${IAM_SERVICE_PORT:-8081}:8081" # El puerto de la izquierda es el de tu PC, el de la derecha es el del contenedor
     environment:
@@ -20,9 +22,12 @@ services:
       IAM_DB_NAME: ${IAM_DB_NAME:-vankoo_iam_db_dev} # Nombre de la base de datos, configurable a través de variable de entorno o 'vankoo_iam_db_dev' por defecto
       IAM_DB_USERNAME: ${IAM_DB_USERNAME:-admin} # Usuario para la base de datos, configurable a través de variable de entorno o 'admin' por defecto
       IAM_DB_PASSWORD: ${IAM_DB_PASSWORD:-password} # Contraseña para la base de datos, configurable a través de variable de entorno o 'password' por defecto
+      IAM_DOCUMENTATION_SERVER_URL: ${IAM_DOCUMENTATION_SERVER_URL:-localhost} # URL para el servidor de documentación, configurable a través de variable de entorno o 'localhost' por defecto
+      IAM_DOCUMENTATION_GATEWAY_URL: ${IAM_DOCUMENTATION_GATEWAY_URL:-localhost} # URL para el API Gateway en la documentación, configurable a través de variable de entorno o 'localhost' por defecto
       KAFKA_HOST: ${KAFKA_HOST:-kafka-broker}
       KAFKA_INTERNAL_PORT: ${KAFKA_INTERNAL_PORT:-9094}
       DISCOVERY_SERVER_URL: ${DISCOVERY_SERVER_URL:-http://discovery-server:8761/eureka/}
+      API_GATEWAY_PORT: ${API_GATEWAY_PORT:-8080} # Usada principalmente para la URL de la documentación de OpenAPI
     depends_on:
       iam-db-postgres:
         condition: service_healthy # Espera a que la DB esté lista para recibir queries
@@ -196,6 +201,7 @@ services:
     ports:
       - "${API_GATEWAY_PORT:-8080}:8080"
     environment:
+      JWT_SECRET: ${JWT_SECRET}
       DISCOVERY_SERVER_URL: ${DISCOVERY_SERVER_URL:-http://discovery-server:8761/eureka/}
     depends_on:
       discovery-server:
@@ -205,7 +211,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 20s
+      start_period: 40s
     restart: unless-stopped
 
 # --- Definición de Redes y Volúmenes ---
