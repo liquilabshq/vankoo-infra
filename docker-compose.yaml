@@ -58,6 +58,8 @@ services:
     hostname: iam-service
     networks:
       - main-network
+    # En producción, no se debería exponer el puerto del IAM directamente al exterior, pero para desarrollo es útil para hacer pruebas manuales con Postman o el navegador.
+    # En producción, se accedería a través del API Gateway.
     ports:
       - "${IAM_SERVICE_PORT:-8081}:8081" # El puerto de la izquierda es el de tu PC, el de la derecha es el del contenedor
     environment:
