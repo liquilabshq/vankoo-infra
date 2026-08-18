@@ -276,28 +276,28 @@ services:
     restart: unless-stopped # Política de reinicio para asegurar que el servicio se mantenga activo incluso si falla
 
   # --- API Gateway (Spring Cloud Gateway) ---
-#  api-gateway:
-#    build:
-#      context: ../vankoo-api-gateway
-#      dockerfile: Dockerfile
-#    hostname: api-gateway
-#    networks:
-#      - main-network
-#    ports:
-#      - "${API_GATEWAY_PORT:-8080}:8080"
-#    environment:
-#      JWT_SECRET: ${JWT_SECRET}
-#      DISCOVERY_SERVER_URL: ${DISCOVERY_SERVER_URL:-http://discovery-server:8761/eureka/}
-#    depends_on:
-#      discovery-server:
-#        condition: service_healthy # Espera a que Eureka esté listo antes de arrancar el API Gateway
-#    healthcheck:
-#      test: [ "CMD", "curl", "-f", "http://localhost:8080/actuator/health/readiness" ] # Verifica que el API Gateway esté listo para recibir tráfico
-#      interval: 30s
-#      timeout: 10s
-#      retries: 3
-#      start_period: 40s
-#    restart: unless-stopped
+  api-gateway:
+    build:
+      context: ../vankoo-api-gateway
+      dockerfile: Dockerfile
+    hostname: api-gateway
+    networks:
+      - main-network
+    ports:
+      - "${API_GATEWAY_PORT:-8080}:8080"
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      DISCOVERY_SERVER_URL: ${DISCOVERY_SERVER_URL:-http://discovery-server:8761/eureka/}
+    depends_on:
+      discovery-server:
+        condition: service_healthy # Espera a que Eureka esté listo antes de arrancar el API Gateway
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/actuator/health/readiness" ] # Verifica que el API Gateway esté listo para recibir tráfico
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
 
 # --- Definición de Redes y Volúmenes ---
 networks:
