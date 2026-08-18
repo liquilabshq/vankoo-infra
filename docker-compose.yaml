@@ -92,6 +92,44 @@ services:
       start_period: 40s
     restart: unless-stopped
 
+  # --- Invoicing Service ---
+  invoicing-service:
+    build:
+      context: ../vankoo-invoicing-service
+      dockerfile: LiquiLabs.Vankoo.Invoicing/Dockerfile
+    hostname: invoicing-service
+    networks:
+      - main-network
+
+    # En producción, normalmente no se expone este puerto directamente.
+    # Para desarrollo lo dejamos publicado para pruebas manuales (Postman, navegador, etc.).
+    # En escenarios productivos, el acceso debería ser a través del API Gateway.
+    ports:
+      - "${INVOICING_SERVICE_PORT:-8082}:8080" # #El puerto de la izquierda es el host port (debe ser unica, sino docker fallara con address already in use), el de la derecha es el container port (puede repetirse sin problema, ya que es interno de cada contenedor)
+    environment:
+      ASPNETCORE_ENVIRONMENT: Docker # Fuerza configuración de entorno Docker
+      ASPNETCORE_HTTP_PORTS: 8080 # Puerto HTTP interno en el que escucha la app dentro del contenedor
+      TokenSettings__Secret: ${JWT_SECRET} # Se reutiliza el secreto JWT compartido entre servicios
+      AzureOcrSettings__ApiKey: ${AZURE_OCR_API_KEY} # API Key del servicio OCR de Azure
+      AzureOcrSettings__Endpoint: ${AZURE_OCR_ENDPOINT} # Endpoint del servicio OCR de Azure
+      DbSettings__ConnectionString: mongodb://${INVOICING_DB_USER:-admin}:${INVOICING_DB_PASSWORD:-password}@invoicing-db-mongo:${INVOICING_DB_PORT:-27017}/?authSource=admin # Conexión a Mongo usando el nombre del servicio como hostname
+      DbSettings__DatabaseName: ${INVOICING_DB_NAME:-vankoo_invoicing_db_dev} # Nombre de la base de datos de facturación
+    depends_on:
+      invoicing-db-mongo:
+        condition: service_started # Espera al arranque del contenedor de Mongo
+      kafka-broker:
+        condition: service_healthy # Espera a que Kafka esté operativo
+      discovery-server:
+        condition: service_healthy # Espera a que Eureka esté listo para registro/descubrimiento
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"] # Verifica readiness real del servicio .NET
+      interval: 30s # Frecuencia de verificación
+      timeout: 10s # Tiempo máximo de espera por intento
+      retries: 3 # Intentos antes de marcar como unhealthy
+      start_period: 40s # Margen inicial para permitir arranque de la app y dependencias
+    restart: unless-stopped # Reinicia automáticamente salvo que se detenga manualmente
+
+
   # --- IAM Database (PostgreSQL) ---
   iam-db-postgres:
     image: postgres:15 # Versión 15 estable
