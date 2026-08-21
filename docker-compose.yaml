@@ -22,10 +22,12 @@ services:
       KAFKA_BROKERS: kafka-broker:9094
       # Almacenamiento de archivos (MinIO en local; STORAGE_PROVIDER=s3 activa Amazon S3)
       STORAGE_PROVIDER: minio
-      MINIO_ENDPOINT: minio
+      MINIO_ENDPOINT: minio # Dirección interna de Docker, usada por el backend para hablar con MinIO
       MINIO_PORT: 9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # URL pública real (puerto expuesto al host) para que el fileUrl devuelto sea abrible desde tu navegador
+      MINIO_PUBLIC_URL: http://localhost:${MINIO_PORT:-9100}/${MINIO_BUCKET_NAME:-vankoo-profile-documents}
       # Discovery Server (Eureka)
       EUREKA_HOST: discovery-server
       EUREKA_PORT: 8761
