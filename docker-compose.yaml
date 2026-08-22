@@ -98,7 +98,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 40s # El IAM tarda un poco más en conectar a DB y Kafka
     restart: unless-stopped
 
   # --- Invoicing Service ---
@@ -153,6 +153,8 @@ services:
     ports:
       - "${IAM_DB_PORT:-5432}:5432"
     healthcheck:
+      # Toma las variables de entorno definidas DENTRO del contenedor (con doble $ para escapar) para ejecutar el comando de verificación de estado de Postgres
+      # Es decir, toma los valores de POSTGRES_USER y POSTGRES_DB que definimos en environment para construir el comando pg_isready
       test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
       interval: 5s
       timeout: 5s
@@ -190,6 +192,59 @@ services:
       ORACLE_PASSWORD: ${INVESTMENT_DB_MASTER_PASSWORD:-password} # El password para el admin (SYS)
       APP_USER: ${INVESTMENT_DB_USER:-VANKOO_INVESTMENT} # El usuario que usará el Investment Service para conectarse a la base de datos
       APP_USER_PASSWORD: ${INVESTMENT_DB_PASSWORD:-password} # La contraseña para el usuario de la aplicación
+
+  # --- Finance Service ---
+  # Todavía no hay contenedor para el finance-service en sí (no tiene Dockerfile
+  # aún) — esto es solo su infraestructura: la base de datos del Read Model y
+  # Axon Server, que es el Event Store (guarda los eventos de dominio, no es una
+  # base de datos tradicional). Ver docs/adr/0001 y 0002 en vankoo-finance-service.
+
+  finance-db-postgres:
+    image: postgres:15
+    networks:
+      - main-network
+    volumes:
+      - finance-db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${FINANCE_DB_NAME:-vankoo_finance_db_dev}
+      POSTGRES_USER: ${FINANCE_DB_USERNAME:-admin}
+      POSTGRES_PASSWORD: ${FINANCE_DB_PASSWORD:-password}
+    ports:
+      - "${FINANCE_DB_PORT:-5434}:5432" # 5434 en tu PC porque 5432 y 5433 ya los usan IAM y Profile
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  axon-server:
+    # Axon Server es el Event Store: donde se guardan los eventos de dominio
+    # (no reemplaza a Postgres, que sigue siendo el Read Model de consultas).
+    image: axoniq/axonserver:latest
+    hostname: axon-server
+    networks:
+      - main-network
+    environment:
+      # SIN esta variable, Axon Server arranca "vacío": no crea ningún contexto,
+      # y el finance-service falla al conectarse con un error NOT_FOUND porque
+      # ni siquiera existe el contexto "default". Lo verificamos a mano antes de
+      # agregarlo acá — sin esto, este servicio no sirve de nada.
+      AXONIQ_AXONSERVER_STANDALONE: true
+    volumes:
+      - axonserver-data:/axonserver/data # Metadatos: contextos, aplicaciones registradas, etc.
+      - axonserver-events:/axonserver/events # Los eventos de dominio en sí (esto es el Event Store real)
+      - axonserver-log:/axonserver/log # Log de replicación interno de Axon Server
+    ports:
+      - "${AXON_SERVER_HTTP_PORT:-8024}:8024" # Consola web + API REST: http://localhost:8024
+      - "${AXON_SERVER_GRPC_PORT:-8124}:8124" # Puerto por el que se conecta finance-service (gRPC)
+      # No exponemos el 8224: es el puerto de clustering interno, y la edición
+      # gratuita de Axon Server no permite más de un nodo (ver docs/adr/0002).
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8024/actuator/health/readiness" ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s # Axon Server tarda un poco en inicializar el contexto la primera vez
 
   finance-cache-redis:
     image: redis:7.4.7-alpine
@@ -318,8 +373,12 @@ volumes:
   iam-db-data:
   invoicing-db-data:
   investment-db-data:
-  minio-data:
   finance-redis-data:
+  finance-db-data:
+  axonserver-data:
+  axonserver-events:
+  axonserver-log:
+  profile-db-data:
+  minio-data:
   kafka-data:
     driver: local
-  profile-db-data:
