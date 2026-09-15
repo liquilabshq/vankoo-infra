@@ -183,7 +183,42 @@ services:
       - "${INVOICING_DB_PORT:-27017}:27017"
 
   # --- Investment Service ---
-  # ...
+  investment-service:
+    build:
+      context: ../vankoo-investment-service
+      dockerfile: Dockerfile
+    hostname: investment-service
+    networks:
+      - main-network
+    # En producción, no se debería exponer el puerto del Investment directamente al exterior, pero
+    # para desarrollo es útil para hacer pruebas manuales con Postman o el navegador.
+    ports:
+      - "${INVESTMENT_SERVICE_PORT:-8083}:8082" # El puerto de la izquierda es el de tu PC, el de la derecha es el del contenedor
+    environment:
+      INVESTMENT_SERVICE_HOST: ${INVESTMENT_SERVICE_HOST:-investment-service}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION_DAYS: ${JWT_EXPIRATION_DAYS}
+      INVESTMENT_DB_HOST: ${INVESTMENT_DB_HOST:-investment-db-oracle} # Usamos el nombre del servicio de la base de datos como hostname para la conexión
+      INVESTMENT_DB_PORT: ${INVESTMENT_DB_PORT:-1521}
+      INVESTMENT_DB_USER: ${INVESTMENT_DB_USER:-VANKOO_INVESTMENT}
+      INVESTMENT_DB_PASSWORD: ${INVESTMENT_DB_PASSWORD:-password}
+      KAFKA_HOST: ${KAFKA_HOST:-kafka-broker}
+      KAFKA_INTERNAL_PORT: ${KAFKA_INTERNAL_PORT:-9094}
+      DISCOVERY_SERVER_URL: ${DISCOVERY_SERVER_URL:-http://discovery-server:8761/eureka/}
+    depends_on:
+      investment-db-oracle:
+        condition: service_started # La imagen de Oracle no define healthcheck propio
+      kafka-broker:
+        condition: service_healthy # Espera a que el broker acepte mensajes
+      discovery-server:
+        condition: service_healthy # Espera a que Eureka esté listo
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8082/actuator/health/readiness" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
 
   # --- Investment Database (Oracle) ---
   investment-db-oracle:
