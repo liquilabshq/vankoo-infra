@@ -250,10 +250,68 @@ services:
       APP_USER_PASSWORD: ${INVESTMENT_DB_PASSWORD:-password} # La contraseña para el usuario de la aplicación
 
   # --- Finance Service ---
-  # Todavía no hay contenedor para el finance-service en sí (no tiene Dockerfile
-  # aún) — esto es solo su infraestructura: la base de datos del Read Model y
-  # Axon Server, que es el Event Store (guarda los eventos de dominio, no es una
-  # base de datos tradicional). Ver docs/adr/0001 y 0002 en vankoo-finance-service.
+  # El servicio y su infraestructura: la base de datos del Read Model y Axon Server,
+  # que es el Event Store (guarda los eventos de dominio, no es una base de datos
+  # tradicional). Ver docs/adr/0001 y 0002 en vankoo-finance-service.
+  finance-service:
+    build:
+      context: ../vankoo-finance-service
+      dockerfile: Dockerfile
+    hostname: finance-service
+    networks:
+      - main-network
+    # El 8083 se publica a propósito aunque el gateway ya rutee a Finance: el webhook
+    # de Stripe (/api/v1/payment-providers/stripe/webhooks) no pasa por el gateway
+    # (Stripe no manda JWT), y `stripe listen --forward-to localhost:8083/...` lo
+    # necesita. La app del inversionista también le pega directo por ahora.
+    ports:
+      - "${FINANCE_SERVICE_PORT:-8083}:8083" # El puerto de la izquierda es el de tu PC, el de la derecha es el del contenedor
+    environment:
+      FINANCE_SERVICE_HOST: ${FINANCE_SERVICE_HOST:-finance-service}
+      FINANCE_DB_HOST: ${FINANCE_DB_HOST:-finance-db-postgres} # Usamos el nombre del servicio de la base de datos como hostname para la conexión
+      # Fijo, NO ${FINANCE_DB_PORT}: esa variable es el puerto en tu PC (5434, porque
+      # 5432 y 5433 ya los usan IAM y Profile). Dentro de la red Postgres escucha en 5432.
+      FINANCE_DB_PORT: 5432
+      FINANCE_DB_NAME: ${FINANCE_DB_NAME:-vankoo_finance_db_dev}
+      FINANCE_DB_USERNAME: ${FINANCE_DB_USERNAME:-admin}
+      FINANCE_DB_PASSWORD: ${FINANCE_DB_PASSWORD:-password}
+      FINANCE_DOCUMENTATION_SERVER_URL: ${FINANCE_DOCUMENTATION_SERVER_URL:-localhost} # URL para el servidor de documentación
+      FINANCE_DOCUMENTATION_GATEWAY_URL: ${FINANCE_DOCUMENTATION_GATEWAY_URL:-localhost} # URL para el API Gateway en la documentación
+      KAFKA_HOST: ${KAFKA_HOST:-kafka-broker}
+      KAFKA_INTERNAL_PORT: ${KAFKA_INTERNAL_PORT:-9094}
+      AXON_SERVER_HOST: ${AXON_SERVER_HOST:-axon-server}
+      # Fijo por la misma razón que FINANCE_DB_PORT: AXON_SERVER_GRPC_PORT es el puerto
+      # publicado en tu PC; dentro de la red Axon Server escucha gRPC en 8124.
+      AXON_SERVER_PORT: 8124
+      DISCOVERY_SERVER_URL: ${DISCOVERY_SERVER_URL:-http://discovery-server:8761/eureka/}
+      API_GATEWAY_PORT: ${API_GATEWAY_PORT:-8080} # Usada principalmente para la URL de la documentación de OpenAPI
+      # Stripe. El servicio arranca con las claves vacías; fallan solo la creación de
+      # depósitos y la verificación de webhooks. Las de test van en tu .env (ignorado
+      # por git), nunca aquí ni en .env.example. Ver docs/guides/stripe-configuration.md
+      # en vankoo-finance-service.
+      STRIPE_ENABLED: ${STRIPE_ENABLED:-true}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      # A dónde vuelve el inversionista tras el Checkout. Esquema propio de la app
+      # móvil, verificado en un teléfono real: Chrome vuelve solo a la app.
+      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-vankoo://deposits/success}
+      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-vankoo://deposits/cancel}
+    depends_on:
+      finance-db-postgres:
+        condition: service_healthy # Flyway migra al arrancar; necesita la DB aceptando conexiones
+      axon-server:
+        condition: service_healthy # Sin el contexto "default" listo, Axon Framework falla al conectar
+      kafka-broker:
+        condition: service_healthy # Espera a que el broker acepte mensajes
+      discovery-server:
+        condition: service_healthy # Espera a que Eureka esté listo
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8083/actuator/health/readiness" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s # Flyway + conexión a Axon Server + Kafka: tarda más que IAM
+    restart: unless-stopped
 
   finance-db-postgres:
     image: postgres:15
@@ -301,15 +359,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 20s # Axon Server tarda un poco en inicializar el contexto la primera vez
-
-  finance-cache-redis:
-    image: redis:7.4.7-alpine
-    networks:
-      - main-network
-    volumes:
-      - finance-redis-data:/data
-    ports:
-      - "${FINANCE_REDIS_PORT:-6379}:6379"
 
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z # Usamos una versión específica para asegurar estabilidad
@@ -457,7 +506,6 @@ volumes:
   iam-db-data:
   invoicing-db-data:
   investment-db-data:
-  finance-redis-data:
   finance-db-data:
   axonserver-data:
   axonserver-events:
