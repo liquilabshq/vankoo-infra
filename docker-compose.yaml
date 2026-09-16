@@ -123,7 +123,14 @@ services:
     # Para desarrollo lo dejamos publicado para pruebas manuales (Postman, navegador, etc.).
     # En escenarios productivos, el acceso debería ser a través del API Gateway.
     ports:
-      - "${INVOICING_SERVICE_PORT:-8082}:8080" # #El puerto de la izquierda es el host port (debe ser unica, sino docker fallara con address already in use), el de la derecha es el container port (puede repetirse sin problema, ya que es interno de cada contenedor)
+      # El puerto de la izquierda es el host port (debe ser única, sino docker fallará
+      # con address already in use), el de la derecha es el container port (puede
+      # repetirse sin problema, ya que es interno de cada contenedor).
+      # 5132 es el puerto que el propio servicio declara en su launchSettings.json, que
+      # es donde corre cuando se levanta fuera de Docker. No puede publicar el 8080 que
+      # usa por dentro —ese es el del gateway— así que usa el suyo de .NET y deja el
+      # bloque 808x entero para los servicios de Spring.
+      - "${INVOICING_SERVICE_PORT:-5132}:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Docker # Fuerza configuración de entorno Docker
       ASPNETCORE_HTTP_PORTS: 8080 # Puerto HTTP interno en el que escucha la app dentro del contenedor
@@ -193,7 +200,12 @@ services:
     # En producción, no se debería exponer el puerto del Investment directamente al exterior, pero
     # para desarrollo es útil para hacer pruebas manuales con Postman o el navegador.
     ports:
-      - "${INVESTMENT_SERVICE_PORT:-8083}:8082" # El puerto de la izquierda es el de tu PC, el de la derecha es el del contenedor
+      # El puerto de la izquierda es el de tu PC, el de la derecha es el del contenedor.
+      # 8082 es el mismo que el servicio declara en su server.port, para que responda en
+      # el mismo sitio dentro y fuera de Docker. Antes publicaba el 8083, que es el de
+      # finance-service: cualquiera que levantase los dos se llevaba un address already
+      # in use, y la tarjeta que pide publicar Finance en el 8083 era imposible.
+      - "${INVESTMENT_SERVICE_PORT:-8082}:8082"
     environment:
       INVESTMENT_SERVICE_HOST: ${INVESTMENT_SERVICE_HOST:-investment-service}
       JWT_SECRET: ${JWT_SECRET}
