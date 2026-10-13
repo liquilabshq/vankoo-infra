@@ -21,3 +21,11 @@ Thumbs.db
 ### Examples and templates ###
 !.env.example
 !.env.template
+### Terraform ###
+# El estado vive en Azure (ver scripts/azure/bootstrap-state.sh); nada local.
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+# Lo genera scripts/azure/build-push.sh en cada build.
+terraform/apps/images.auto.tfvars
