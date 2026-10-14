@@ -217,6 +217,12 @@ services:
       KAFKA_HOST: ${KAFKA_HOST:-kafka-broker}
       KAFKA_INTERNAL_PORT: ${KAFKA_INTERNAL_PORT:-9094}
       DISCOVERY_SERVER_URL: ${DISCOVERY_SERVER_URL:-http://discovery-server:8761/eureka/}
+      # TEMPORAL: el risk-service ya califica cada subasta nueva, así que el simulador de
+      # riesgo de Investment queda apagado para no evaluarlas dos veces. Para volver al
+      # simulador (por ejemplo, sin risk-service), pon INVESTMENT_RISK_SIMULATION_ENABLED=true
+      # en tu .env. Se borra junto con SimulatedRiskEvaluationHandler: ver
+      # docs/SIMULATED_RISK_EVALUATION.md en vankoo-investment-service.
+      INVESTMENT_RISK_SIMULATION_ENABLED: ${INVESTMENT_RISK_SIMULATION_ENABLED:-false}
     depends_on:
       investment-db-oracle:
         condition: service_started # La imagen de Oracle no define healthcheck propio
@@ -248,6 +254,62 @@ services:
       ORACLE_PASSWORD: ${INVESTMENT_DB_MASTER_PASSWORD:-password} # El password para el admin (SYS)
       APP_USER: ${INVESTMENT_DB_USER:-VANKOO_INVESTMENT} # El usuario que usará el Investment Service para conectarse a la base de datos
       APP_USER_PASSWORD: ${INVESTMENT_DB_PASSWORD:-password} # La contraseña para el usuario de la aplicación
+
+  # --- Risk Service ---
+  # Califica cada subasta nueva (A, B o C) y se lo entrega a Investment. En la fase 1
+  # la nota es PROVISIONAL: ver docs/PROVISIONAL_RISK_GRADE.md en vankoo-risk-service.
+  risk-service:
+    build:
+      context: ../vankoo-risk-service
+      dockerfile: Dockerfile
+    hostname: risk-service
+    networks:
+      - main-network
+    ports:
+      # 8000 es el puerto propio de FastAPI, igual que Profile usa el de NestJS y Invoicing
+      # el de .NET: el bloque 808x queda para los servicios de Spring.
+      - "${RISK_SERVICE_PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${RISK_DB_USERNAME:-admin}:${RISK_DB_PASSWORD:-password}@risk-db-postgres:5432/${RISK_DB_NAME:-vankoo_risk_db_dev} # 5432 fijo: es el puerto dentro de la red, no el de tu PC
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_HOST:-kafka-broker}:${KAFKA_INTERNAL_PORT:-9094}
+      KAFKA_GROUP_ID: risk-auction-assessment-v1
+      # latest a propósito: el tópico de Investment guarda todo para siempre, y un grupo
+      # nuevo que empezara por el principio re-calificaría las subastas viejas.
+      KAFKA_AUTO_OFFSET_RESET: ${RISK_KAFKA_AUTO_OFFSET_RESET:-latest}
+      # Directo a Investment, no al gateway: el gateway no rutea /internal.
+      INVESTMENT_BASE_URL: http://${INVESTMENT_SERVICE_HOST:-investment-service}:8082
+    depends_on:
+      risk-db-postgres:
+        condition: service_healthy # Alembic migra al arrancar; necesita la DB aceptando conexiones
+      kafka-broker:
+        condition: service_healthy # Espera a que el broker acepte consumidores
+      investment-service:
+        condition: service_started # La entrega reintenta sola si Investment aún no responde
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health/ready" ] # Base de datos, consumidor y repartidor arriba
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  risk-db-postgres:
+    image: postgres:15
+    networks:
+      - main-network
+    volumes:
+      - risk-db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${RISK_DB_NAME:-vankoo_risk_db_dev}
+      POSTGRES_USER: ${RISK_DB_USERNAME:-admin}
+      POSTGRES_PASSWORD: ${RISK_DB_PASSWORD:-password}
+    ports:
+      - "${RISK_DB_PORT:-5435}:5432" # 5435 en tu PC porque 5432, 5433 y 5434 ya los usan IAM, Profile y Finance
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   # --- Finance Service ---
   # El servicio y su infraestructura: la base de datos del Read Model y Axon Server,
@@ -513,4 +575,5 @@ volumes:
   profile-db-data:
   minio-data:
   kafka-data:
+  risk-db-data:
     driver: local
