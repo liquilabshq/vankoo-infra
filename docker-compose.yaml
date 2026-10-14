@@ -217,12 +217,6 @@ services:
       KAFKA_HOST: ${KAFKA_HOST:-kafka-broker}
       KAFKA_INTERNAL_PORT: ${KAFKA_INTERNAL_PORT:-9094}
       DISCOVERY_SERVER_URL: ${DISCOVERY_SERVER_URL:-http://discovery-server:8761/eureka/}
-      # TEMPORAL: el risk-service ya califica cada subasta nueva, así que el simulador de
-      # riesgo de Investment queda apagado para no evaluarlas dos veces. Para volver al
-      # simulador (por ejemplo, sin risk-service), pon INVESTMENT_RISK_SIMULATION_ENABLED=true
-      # en tu .env. Se borra junto con SimulatedRiskEvaluationHandler: ver
-      # docs/SIMULATED_RISK_EVALUATION.md en vankoo-investment-service.
-      INVESTMENT_RISK_SIMULATION_ENABLED: ${INVESTMENT_RISK_SIMULATION_ENABLED:-false}
     depends_on:
       investment-db-oracle:
         condition: service_started # La imagen de Oracle no define healthcheck propio
@@ -256,8 +250,8 @@ services:
       APP_USER_PASSWORD: ${INVESTMENT_DB_PASSWORD:-password} # La contraseña para el usuario de la aplicación
 
   # --- Risk Service ---
-  # Califica cada subasta nueva (A, B o C) y se lo entrega a Investment. En la fase 1
-  # la nota es PROVISIONAL: ver docs/PROVISIONAL_RISK_GRADE.md en vankoo-risk-service.
+  # Decide si la factura de cada subasta nueva se puede financiar y la califica (A, B o C)
+  # con los padrones de SUNAT; ver docs/SCORING_RULES.md en vankoo-risk-service.
   risk-service:
     build:
       context: ../vankoo-risk-service
@@ -278,6 +272,12 @@ services:
       KAFKA_AUTO_OFFSET_RESET: ${RISK_KAFKA_AUTO_OFFSET_RESET:-latest}
       # Directo a Investment, no al gateway: el gateway no rutea /internal.
       INVESTMENT_BASE_URL: http://${INVESTMENT_SERVICE_HOST:-investment-service}:8082
+      # Padrones de SUNAT: se refrescan solos al arrancar y cada día a esta hora (Lima).
+      # La primera vez descarga unos 400 MB y llena ~2 GB en risk-db-postgres; mientras
+      # tanto las subastas salen con nota C. Pon REGISTRY_REFRESH_ENABLED=false en tu .env
+      # si no lo quieres en tu PC (python -m registries refresh lo hace a mano).
+      REGISTRY_REFRESH_ENABLED: ${REGISTRY_REFRESH_ENABLED:-true}
+      REGISTRY_REFRESH_HOUR: ${REGISTRY_REFRESH_HOUR:-4}
     depends_on:
       risk-db-postgres:
         condition: service_healthy # Alembic migra al arrancar; necesita la DB aceptando conexiones
