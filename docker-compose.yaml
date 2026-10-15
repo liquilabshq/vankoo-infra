@@ -278,6 +278,12 @@ services:
       # si no lo quieres en tu PC (python -m registries refresh lo hace a mano).
       REGISTRY_REFRESH_ENABLED: ${REGISTRY_REFRESH_ENABLED:-true}
       REGISTRY_REFRESH_HOUR: ${REGISTRY_REFRESH_HOUR:-4}
+      # Noticias negativas del pagador con IA (OpenAI, gpt-6-luna con búsqueda web; unos
+      # $0,05 por pagador, reutilizado 7 días). La clave va solo en tu .env; sin ella el
+      # paso se salta y el servicio funciona igual.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      NEWS_ENABLED: ${NEWS_ENABLED:-true}
+      NEWS_MODEL: ${NEWS_MODEL:-gpt-6-luna}
     depends_on:
       risk-db-postgres:
         condition: service_healthy # Alembic migra al arrancar; necesita la DB aceptando conexiones
