@@ -284,6 +284,13 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       NEWS_ENABLED: ${NEWS_ENABLED:-true}
       NEWS_MODEL: ${NEWS_MODEL:-gpt-6-luna}
+      # Certificado verde de la MYPE: lo sube a Profile, risk lo lee con la misma clave de
+      # OpenAI y decide con reglas fijas (docs/GREEN_RULES.md de risk). Sin clave, la subida
+      # queda "en revisión". Risk descarga el archivo por la red interna (minio:9000), no por
+      # la URL pública de Profile (localhost:9100), que desde un contenedor no lleva a MinIO.
+      GREEN_ENABLED: ${GREEN_ENABLED:-true}
+      GREEN_MODEL: ${GREEN_MODEL:-gpt-6-luna}
+      GREEN_DOCUMENTS_BASE_URL: http://minio:9000/${MINIO_BUCKET_NAME:-vankoo-profile-documents}
     depends_on:
       risk-db-postgres:
         condition: service_healthy # Alembic migra al arrancar; necesita la DB aceptando conexiones
@@ -292,7 +299,7 @@ services:
       investment-service:
         condition: service_started # La entrega reintenta sola si Investment aún no responde
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/health/ready" ] # Base de datos, consumidor y repartidor arriba
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health/ready" ] # Base de datos, consumidores, repartidor y relay arriba
       interval: 30s
       timeout: 10s
       retries: 3
