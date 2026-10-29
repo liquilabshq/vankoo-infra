@@ -48,6 +48,18 @@ Si estás en DataGrip, puedes ejecutar los scripts con el plugin "Shell Script" 
 - Puedes ejecutar el script `scripts/local/local-remove.sh` para eliminar los servicios. Este script eliminará los contenedores, las redes y también los volúmenes, es decir, los datos de las bases de datos (`docker compose down -v`).
 - También puedes usar el comando `docker compose down` en la raíz del repositorio. Esto eliminará los contenedores y las redes de Vankoo, pero conservará los volúmenes; para borrarlos también, añade `-v`.
 
+### KYC con fichas de demostración (parche temporal)
+
+Para exponer el KYC sin usar la ficha RUC de una persona real, risk puede aceptar fichas firmadas por una CA de demostración de Vankoo. Salen siempre como «Verificado (demo)», aparte de «Verificado»:
+
+```bash
+cd ../vankoo-risk-service && uv run python -m verification demo-ca
+uv run python -m verification demo-ficha --ruc 20601234567 --name "TEXTILES ANDINOS S.A.C." --out demo-kyc/ficha.pdf
+cd ../vankoo-infra && docker compose -f docker-compose.yaml -f docker-compose.kyc-demo.yaml up -d risk-service
+```
+
+`docker-compose.kyc-demo.yaml` solo añade `KYC_DEMO_CA_PATH` y monta `demo-kyc/` de solo lectura. **Nunca en producción.** Las reglas y las opciones de `demo-ficha` están en `docs/KYC_RULES.md` de risk.
+
 > Nota: DataGrip no tiene terminal integrada, así que deberás descargar el plugin `Terminal` oficial de JetBrains si quieres ejecutar los comandos desde el IDE. En caso quieras ejecutarlos manualmente sin los scripts, tendrás que hacerlo desde una terminal externa como Git Bash o WSL (en Windows) o Terminal (en macOS o Linux). También te sugiero descargar Warp, que es una terminal más moderna y con mejor experiencia de usuario que las terminales tradicionales, pero no es indispensable.
 
 ### Para ver los logs de los servicios:
