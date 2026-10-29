@@ -1,0 +1,14 @@
+# PARCHE TEMPORAL para las demostraciones del KYC: hace que risk acepte las fichas RUC firmadas
+# por la CA de demostración de Vankoo (nunca por SUNAT), siempre marcadas "demo" y mostradas como
+# "Verificado (demo)". Nunca usarlo en producción. Quitarlo cuando acaben las demos.
+#
+#   cd ../vankoo-risk-service && uv run python -m verification demo-ca
+#   docker compose -f docker-compose.yaml -f docker-compose.kyc-demo.yaml up -d risk-service
+#
+# La CA vive en vankoo-risk-service/demo-kyc/ (fuera de git) y se monta de solo lectura.
+services:
+  risk-service:
+    environment:
+      KYC_DEMO_CA_PATH: /app/demo-kyc/ca.pem
+    volumes:
+      - ../vankoo-risk-service/demo-kyc:/app/demo-kyc:ro

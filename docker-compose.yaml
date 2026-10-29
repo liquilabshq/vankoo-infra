@@ -139,6 +139,11 @@ services:
       AzureOcrSettings__Endpoint: ${AZURE_OCR_ENDPOINT} # Endpoint del servicio OCR de Azure
       DbSettings__ConnectionString: mongodb://${INVOICING_DB_USER:-admin}:${INVOICING_DB_PASSWORD:-password}@invoicing-db-mongo:${INVOICING_DB_PORT:-27017}/?authSource=admin # Conexión a Mongo usando el nombre del servicio como hostname
       DbSettings__DatabaseName: ${INVOICING_DB_NAME:-vankoo_invoicing_db_dev} # Nombre de la base de datos de facturación
+      # KYC de la MYPE: Invoicing escucha CompanyKycStatusChanged en vankoo.profile.events y no deja
+      # subir facturas (403 MYPE_NOT_VERIFIED) a una MYPE que no esté VERIFIED. Earliest a propósito:
+      # el tópico de Profile puede crearse después de que arranque Invoicing.
+      KafkaSettings__ProfileKycGroupId: invoicing-profile-kyc-v1
+      KafkaSettings__ProfileKycAutoOffsetReset: Earliest
     depends_on:
       invoicing-db-mongo:
         condition: service_started # Espera al arranque del contenedor de Mongo
@@ -291,6 +296,11 @@ services:
       GREEN_ENABLED: ${GREEN_ENABLED:-true}
       GREEN_MODEL: ${GREEN_MODEL:-gpt-6-luna}
       GREEN_DOCUMENTS_BASE_URL: http://minio:9000/${MINIO_BUCKET_NAME:-vankoo-profile-documents}
+      # KYC de la MYPE: risk verifica sin salir a internet la firma de SUNAT de la ficha RUC que la
+      # MYPE sube a Profile, y la contrasta con el padrón y la SSCO (docs/KYC_RULES.md de risk).
+      # Descarga la ficha por la misma GREEN_DOCUMENTS_BASE_URL. Las fichas de demostración solo
+      # se aceptan con docker-compose.kyc-demo.yaml (parche temporal, ver README).
+      KYC_PROFILE_GROUP_ID: risk-profile-verification-v1
     depends_on:
       risk-db-postgres:
         condition: service_healthy # Alembic migra al arrancar; necesita la DB aceptando conexiones
