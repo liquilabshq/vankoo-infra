@@ -37,11 +37,13 @@ done
 
 setup_terraform_env
 check_providers Microsoft.App Microsoft.ContainerRegistry Microsoft.OperationalInsights \
-  Microsoft.DBforPostgreSQL Microsoft.DocumentDB Microsoft.CognitiveServices Microsoft.Storage
+  Microsoft.DBforPostgreSQL Microsoft.DocumentDB Microsoft.CognitiveServices Microsoft.Storage \n  Microsoft.Web Microsoft.Insights
 
 "$SCRIPT_DIR/bootstrap-state.sh"
 
 tf_apply core ${YES[@]+"${YES[@]}"}
+# La función de verificación de DNI no cuesta parada: se aplica pero no se destruye al apagar.
+tf_apply functions ${YES[@]+"${YES[@]}"}
 tf_apply base ${YES[@]+"${YES[@]}"}
 # Tras un azure-stop.sh: los PostgreSQL deben estar en marcha antes de que
 # Terraform los revise.
@@ -63,3 +65,4 @@ tf_apply apps ${YES[@]+"${YES[@]}"}
 log "Vankoo está en pie"
 echo "Gateway: $(tf_output apps gateway_url)"
 echo "Scalar:  $(tf_output apps gateway_scalar_url)"
+echo "DNI:     $(tf_output functions verify_dni_url)"

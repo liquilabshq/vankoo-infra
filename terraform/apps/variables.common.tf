@@ -1,4 +1,4 @@
-# Variables comunes a todas las capas. Es igual en las cuatro: si cambias
+# Variables comunes a todas las capas. Es igual en todas las capas: si cambias
 # una, cambia las demás.
 
 variable "resource_group_name" {

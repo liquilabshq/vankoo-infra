@@ -4,12 +4,13 @@
 # datos se pierden y se empieza de cero en el siguiente azure-deploy.sh.
 #
 # Se conservan la capa core (environment, workspace de logs y OCR, gratis
-# mientras no hay apps) y la cuenta del estado. Así la URL del gateway no
+# mientras no hay apps), la capa functions (función de DNI, plan de consumo) y
+# la cuenta del estado. Así la URL del gateway no
 # cambia entre encendidos.
 #
 # Uso: scripts/azure/azure-destroy.sh [--yes] [--all]
 #   --yes  no pide confirmación en cada terraform destroy
-#   --all  destruye también la capa core: la URL del gateway cambiará
+#   --all  destruye también las capas functions y core: la URL del gateway cambiará
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 YES=()
@@ -35,6 +36,7 @@ tf_destroy data ${YES[@]+"${YES[@]}"}
 tf_destroy base ${YES[@]+"${YES[@]}"}
 
 if [[ "$ALL" == true ]]; then
+  tf_destroy functions ${YES[@]+"${YES[@]}"}
   tf_destroy core ${YES[@]+"${YES[@]}"}
 fi
 
