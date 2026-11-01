@@ -87,9 +87,13 @@ almacenamiento `vankootf…` del mismo grupo, que ningún script borra.
 4. Su repo en la lista `SERVICES` de `scripts/azure/build-push.sh`.
 5. Si se despliega desde su propio pipeline: `ignore_changes` sobre la imagen
    en su Container App, una credencial federada en `vankoo-github-ci` por cada
-   sujeto (`repo:liquilabshq/<repo>:ref:refs/heads/develop` y
-   `repo:liquilabshq/<repo>:environment:development`), el rol Contributor
-   sobre su Container App y un job que llame a `deliver-container-app.yml`.
+   sujeto (`repo:liquilabshq@<id-org>/<repo>@<id-repo>:ref:refs/heads/develop`
+   y `repo:liquilabshq@<id-org>/<repo>@<id-repo>:environment:development`), el
+   rol Contributor sobre su Container App y un job que llame a
+   `deliver-container-app.yml`. GitHub firma el token con los ids numéricos de
+   la organización y del repo (`gh api orgs/liquilabshq --jq .id` y
+   `gh api repos/liquilabshq/<repo> --jq .id`); sin ellos, Azure lo rechaza con
+   `AADSTS700213`.
 
 Si el servicio guarda datos solo dentro de su contenedor (Kafka, Axon u Oracle
 sin disco persistente), añade a su Container App
