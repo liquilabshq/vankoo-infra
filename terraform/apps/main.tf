@@ -172,6 +172,13 @@ resource "azurerm_container_app" "iam" {
       }
     }
   }
+
+  # Después de crearla, la imagen la cambia el pipeline del repo
+  # (.github/workflows/deliver-container-app.yml); si Terraform la vigilara,
+  # cada apply volvería a la de images.auto.tfvars.
+  lifecycle {
+    ignore_changes = [template[0].container[0].image]
+  }
 }
 
 # --- Invoicing Service --------------------------------------------------------
@@ -310,6 +317,11 @@ resource "azurerm_container_app" "invoicing" {
         path = "/health/live"
       }
     }
+  }
+
+  # Igual que en IAM: la imagen la gestiona el pipeline del repo.
+  lifecycle {
+    ignore_changes = [template[0].container[0].image]
   }
 }
 

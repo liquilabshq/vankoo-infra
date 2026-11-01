@@ -34,9 +34,17 @@ cada capa y pide `yes`; con `--yes` no pregunta. Con `--skip-build` reutiliza
 las últimas imágenes (no sirve tras un `azure-destroy.sh`: el registro es nuevo
 y está vacío).
 
-Para subir una versión nueva de un servicio, basta con volver a ejecutar
+Para subir una versión nueva del gateway, basta con volver a ejecutar
 `azure-deploy.sh --env-file .env`: reconstruye las imágenes y Terraform solo
 actualiza las apps cuya imagen cambió.
+
+IAM e Invoicing no se actualizan así: cada merge a `develop` de su repo dispara
+su pipeline, que construye la imagen, la publica en el registro y la despliega
+(workflow reutilizable `.github/workflows/deliver-container-app.yml` de este
+repo). Por eso sus Container Apps llevan `ignore_changes` sobre la imagen:
+Terraform la pone al crearlas y después no la toca. El pipeline entra en Azure
+con OIDC, como la identidad administrada `vankoo-github-ci`, que solo puede
+subir imágenes al registro y actualizar esas dos apps.
 
 `--env-file` toma del `.env` solo las credenciales del bucket de S3 de
 Invoicing (`AWS_REGION`, `AWS_S3_BUCKET`, `AWS_ACCESS_KEY_ID`,
@@ -77,6 +85,11 @@ almacenamiento `vankootf…` del mismo grupo, que ningún script borra.
 3. Su ruta en el gateway: la variable `<SERVICIO>_SERVICE_URI` en la app del
    gateway (`http://<nombre-de-la-app>`).
 4. Su repo en la lista `SERVICES` de `scripts/azure/build-push.sh`.
+5. Si se despliega desde su propio pipeline: `ignore_changes` sobre la imagen
+   en su Container App, una credencial federada en `vankoo-github-ci` por cada
+   sujeto (`repo:liquilabshq/<repo>:ref:refs/heads/develop` y
+   `repo:liquilabshq/<repo>:environment:development`), el rol Contributor
+   sobre su Container App y un job que llame a `deliver-container-app.yml`.
 
 Si el servicio guarda datos solo dentro de su contenedor (Kafka, Axon u Oracle
 sin disco persistente), añade a su Container App
