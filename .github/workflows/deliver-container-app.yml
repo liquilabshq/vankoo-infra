@@ -1,0 +1,210 @@
+# Entrega continua de un microservicio en Azure Container Apps.
+#
+# Workflow reutilizable: cada servicio lo llama desde su propio pipeline cuando
+# su CI ya pasó. Construye la imagen, la publica en el registro (ACR) y la
+# despliega en su Container App del ambiente de desarrollo.
+#
+# Uso desde el repo del servicio:
+#
+#   deliver:
+#     needs: [build-test]
+#     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+#     permissions:
+#       contents: read
+#       id-token: write
+#     uses: liquilabshq/vankoo-infra/.github/workflows/deliver-container-app.yml@develop
+#     with:
+#       image: invoicing-service
+#       container-app: vankoo-invoicing-service
+#       dockerfile: LiquiLabs.Vankoo.Invoicing/Dockerfile
+#     secrets: inherit
+#
+# Autenticación: OIDC contra la identidad administrada vankoo-github-ci, sin
+# contraseñas. El repo del servicio solo guarda AZURE_CLIENT_ID,
+# AZURE_TENANT_ID y AZURE_SUBSCRIPTION_ID, y Azure acepta el token únicamente
+# si viene de la rama develop (publicar) o del environment development
+# (desplegar) de ese repo.
+#
+# La imagen de estas Container Apps la gestiona este workflow: Terraform la
+# ignora después de crearlas (ver terraform/apps/main.tf).
+
+name: Deliver container app
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Nombre de la imagen en el registro (p. ej. invoicing-service).
+        required: true
+        type: string
+      container-app:
+        description: Nombre de la Container App que se actualiza.
+        required: true
+        type: string
+      dockerfile:
+        description: Ruta del Dockerfile, relativa a la raíz del repo.
+        required: false
+        type: string
+        default: Dockerfile
+      context:
+        description: Contexto de construcción de la imagen.
+        required: false
+        type: string
+        default: .
+      environment:
+        description: Environment de GitHub que protege el despliegue.
+        required: false
+        type: string
+        default: development
+      registry:
+        description: Nombre del Azure Container Registry.
+        required: false
+        type: string
+        default: vankooacrqxv9yb
+      resource-group:
+        description: Grupo de recursos de Azure.
+        required: false
+        type: string
+        default: liquilabs-vankoo
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+    outputs:
+      image-ref:
+        description: Referencia completa de la imagen desplegada.
+        value: ${{ jobs.publish.outputs.image-ref }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Build and publish image
+    runs-on: ubuntu-latest
+    outputs:
+      image-ref: ${{ steps.tags.outputs.image-ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Misma convención que scripts/azure/build-push.sh: la etiqueta es el
+      # commit corto. Se añade la del ambiente para saber qué corre en él.
+      - name: Compute tags
+        id: tags
+        env:
+          REPOSITORY: ${{ inputs.registry }}.azurecr.io/${{ inputs.image }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          sha="${GITHUB_SHA::7}"
+          {
+            echo "image-ref=$REPOSITORY:$sha"
+            echo "tags<<EOF"
+            echo "$REPOSITORY:$sha"
+            echo "$REPOSITORY:$ENVIRONMENT"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Registry login
+        run: az acr login --name "${{ inputs.registry }}"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ inputs.image }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image }}
+
+      - name: Summary
+        run: echo "Imagen publicada → \`${{ steps.tags.outputs.image-ref }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    needs: publish
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    # Un despliegue por app a la vez; el siguiente espera en lugar de cancelar.
+    concurrency:
+      group: deploy-${{ inputs.container-app }}
+      cancel-in-progress: false
+    env:
+      APP: ${{ inputs.container-app }}
+      RG: ${{ inputs.resource-group }}
+      IMAGE: ${{ needs.publish.outputs.image-ref }}
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Container Apps CLI extension
+        run: az extension add --name containerapp --upgrade --only-show-errors
+
+      # Solo cambia la imagen: secretos, variables y escalado siguen siendo los
+      # que definió Terraform. Cada cambio crea una revisión nueva.
+      - name: Update container app
+        id: update
+        run: |
+          revision="$(az containerapp update -n "$APP" -g "$RG" --image "$IMAGE" \
+            --only-show-errors --query properties.latestRevisionName -o tsv)"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "Revisión creada: $revision"
+
+      # Quality gate del despliegue: la revisión nueva tiene que arrancar y
+      # pasar sus sondas. Si no lo consigue, el job falla; en modo de revisión
+      # única el tráfico sigue en la revisión anterior hasta que la nueva esté
+      # lista, así que un despliegue roto no deja el servicio caído.
+      - name: Wait for a healthy revision
+        env:
+          REVISION: ${{ steps.update.outputs.revision }}
+        run: |
+          for attempt in $(seq 1 40); do
+            read -r provisioning running health < <(az containerapp revision show \
+              -n "$APP" -g "$RG" --revision "$REVISION" --only-show-errors \
+              --query "{p:properties.provisioningState, r:properties.runningState, h:properties.healthState}" -o tsv)
+            echo "[$attempt/40] provisioning=$provisioning running=$running health=$health"
+
+            if [[ "$provisioning" == "Failed" || "$running" == "Failed" || "$running" == "Degraded" ]]; then
+              echo "::error::La revisión $REVISION no arrancó ($provisioning / $running)."
+              exit 1
+            fi
+            if [[ "$provisioning" == "Provisioned" && "$health" == "Healthy" && "$running" == Running* ]]; then
+              echo "La revisión $REVISION está sana."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::La revisión $REVISION no quedó sana en 10 minutos."
+          exit 1
+
+      - name: Summary
+        env:
+          REVISION: ${{ steps.update.outputs.revision }}
+        run: |
+          {
+            echo "### Despliegue en ${{ inputs.environment }}"
+            echo "| Container App | Imagen | Revisión |"
+            echo "| --- | --- | --- |"
+            echo "| \`$APP\` | \`$IMAGE\` | \`$REVISION\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
