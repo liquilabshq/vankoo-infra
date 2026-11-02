@@ -8,11 +8,11 @@ y tiene pruebas automatizadas. Código: repositorio `vankoo-dni-verification-fun
 
 | Requisito | Cómo se cumple |
 |---|---|
-| Función serverless | Azure Functions, plan de consumo (Linux, Y1), modelo de programación v2 de Python |
+| Función serverless | Azure Functions con plan **Flex Consumption** (Linux; escala a cero y se paga por ejecución), modelo de programación v2 de Python |
 | Caso de uso | Validar que el DNI del inversor existe y que los nombres declarados le pertenecen, en lugar de la revisión 100 % manual del KYC del inversor. El RUC de la MYPE ya se verifica en risk-service |
 | Disparador | **HTTP trigger** `POST /api/verify-dni` (nivel de autorización `function`, clave en `x-functions-key`) |
 | Integración | profile-service la llama al completar el perfil del inversor y aplica el veredicto con `verifyKyc` / `rejectKyc` |
-| Despliegue automatizado | Terraform (capa `functions`) crea la infraestructura; el workflow `deploy.yml` publica el código al fusionar en `main` |
+| Despliegue automatizado | Terraform (capa `functions`) crea la infraestructura; el workflow `deploy.yml` publica el código al fusionar en `develop`, autenticándose con OIDC |
 | Pruebas | pytest (57 pruebas unitarias, sin red, más una de humo contra la web real), ruff, `mypy --strict`; Jest en profile-service (16 pruebas nuevas); prueba local con la extensión Azure Functions de VS Code |
 
 ## Por qué serverless aquí
@@ -39,19 +39,21 @@ Detalle y decisiones: `vankoo-dni-verification-function/docs/ARCHITECTURE.md`.
 
 ## Despliegue automatizado
 
-1. **Infraestructura** — `terraform/functions`: cuenta de almacenamiento, plan de consumo, Function App (Python 3.12),
+1. **Infraestructura** — `terraform/functions`: cuenta de almacenamiento (con el contenedor del paquete de código), plan Flex Consumption (`FC1`), Function App (Python 3.12),
    Application Insights conectado al workspace `vankoo-logs`. `scripts/azure/azure-deploy.sh` aplica la capa (y ahora
    exige `Microsoft.Web` y `Microsoft.Insights`); `azure-destroy.sh` la conserva salvo con `--all`, porque parada no cuesta.
-2. **Código** — `.github/workflows/deploy.yml` del repo de la función: al fusionar en `main` ejecuta ruff, mypy y
-   pytest; si pasan, publica con `Azure/functions-action` (build remoto con Oryx) y comprueba `GET /api/health`.
+2. **Código** — `.github/workflows/deploy.yml` del repo de la función: al fusionar en `develop` ejecuta ruff, mypy y
+   pytest; si pasan, entra en Azure con OIDC (identidad administrada `vankoo-github-ci`, sin contraseñas), publica con
+   `Azure/functions-action` (build remoto, `sku: flexconsumption`) y comprueba `GET /api/health`.
 3. **Integración continua** — `ci.yml` en cada push/PR a `main` y `develop`.
 
 Primer despliegue:
 
 ```bash
-scripts/azure/azure-deploy.sh --env-file .env      # crea la capa functions
-terraform -chdir=terraform/functions output -raw function_app_name
-az functionapp deployment list-publishing-profiles -g liquilabs-vankoo -n <app> --xml   # → secreto del repo
+# Crea la capa functions (y la salida nueva de core). Se aplica solo lo necesario, sin reconstruir imágenes:
+source scripts/azure/lib.sh && setup_terraform_env && tf_apply core && tf_apply functions
+terraform -chdir=terraform/functions output -raw function_app_name   # → variable AZURE_FUNCTIONAPP_NAME
+# Una persona con permisos crea la credencial federada y el rol Contributor sobre el Function App (ver README del repo).
 # Ejecutar el workflow "Deploy to Azure Functions" (Actions → Run workflow) para publicar el código
 az functionapp keys list -g liquilabs-vankoo -n <app> --query functionKeys.default -o tsv  # → DNI_VERIFICATION_KEY
 ```
@@ -66,6 +68,15 @@ az functionapp keys list -g liquilabs-vankoo -n <app> --query functionKeys.defau
   no re-verifica un KYC ya procesado y no bloquea la respuesta; cliente HTTP (clave, errores, estados desconocidos).
 - **Local con VS Code**: extensión Azure Functions + Core Tools (`func start` / F5) y `requests.http`; guía en el README
   del repo de la función.
+
+## Plan de hosting: por qué Flex Consumption
+
+El primer intento fue el plan Consumption clásico (`Y1`), pero la suscripción rechazó crearlo: Azure respondió que el
+límite de cuota de «Y1 VMs» era 0. Los créditos no cambian eso: la cuota es un límite técnico por suscripción y
+región, y las suscripciones de estudiante suelen traer algunos tipos de plan en cero. Flex Consumption es el plan de
+consumo más reciente de Azure Functions: el mismo producto, código y disparadores, y la misma idea (escala a cero, pago
+por ejecución), con otro tipo de plan (`FC1`) y otra cuota. Cambia la capa Terraform y el paso de despliegue; el código
+de la función no cambia.
 
 ## Limitaciones conocidas
 

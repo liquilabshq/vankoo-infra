@@ -8,9 +8,3 @@ variable "dni_provider" {
     error_message = "dni_provider debe ser eldni o fake."
   }
 }
-
-variable "service_plan_sku" {
-  description = "SKU del plan. Y1 = consumo (pago por uso). Si la suscripción no tiene cuota de Y1 en la región, probar B1 (plan fijo, ~13 USD/mes)."
-  type        = string
-  default     = "Y1"
-}

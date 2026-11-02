@@ -68,7 +68,7 @@ nadie tiene que copiarlos.
 | Capa | Qué crea | Con `azure-destroy.sh` |
 |---|---|---|
 | `core` | El sufijo de los nombres únicos, el OCR (Document Intelligence F0), el workspace de logs y el Container Apps Environment | Se conserva: sin apps no cuesta nada, y conservar el environment mantiene la URL del gateway |
-| `functions` | La función serverless de verificación de DNI (Azure Functions, plan de consumo, Application Insights) | Se conserva (se destruye con `--all`): parada no cuesta, y así mantiene su URL, su clave y el código publicado |
+| `functions` | La función serverless de verificación de DNI (Azure Functions con plan Flex Consumption, Application Insights) | Se conserva (se destruye con `--all`): parada no cuesta, y así mantiene su URL, su clave y el código publicado |
 | `base` | Registro de imágenes | Se destruye |
 | `data` | Una base de datos por servicio: PostgreSQL de IAM, MongoDB de Invoicing | Se destruye |
 | `apps` | Una Container App por servicio | Se destruye |
