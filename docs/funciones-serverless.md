@@ -80,6 +80,14 @@ de la función no cambia.
 
 ## Limitaciones conocidas
 
+- **eldni.com no responde a las peticiones que salen de Azure.** Al desplegar la función en Central US, la consulta
+  fallaba con `404 Not Found` ya en la página de inicio (`https://eldni.com/`), mientras que desde Perú el mismo código
+  funciona (verificado con DNIs reales y con DNI inexistente). Parece un bloqueo por IP o por región del sitio; no se pudo
+  confirmar la causa exacta. Por eso en la nube la función corre con el proveedor `fake` (`dni_provider = "fake"` por
+  defecto en `terraform/functions`), con DNIs de demostración, y el scraping real se demuestra desde local. La
+  arquitectura lo previó: la fuente está detrás de un puerto intercambiable, y el error 502 informa el motivo del fallo
+  (`reason`), lo que permitió diagnosticarlo en minutos. Para reintentar con la fuente real (otra región, otra IP de
+  salida): `-var dni_provider=eldni`.
 - eldni.com **no es la fuente oficial de RENIEC**: puede tener errores o cambiar su HTML. Mitigado con el puerto
   intercambiable, el proveedor `fake` y la regla de fallar hacia revisión manual.
 - Los fixtures HTML son respuestas reales de eldni.com (capturadas en noviembre de 2026, con los datos personales
