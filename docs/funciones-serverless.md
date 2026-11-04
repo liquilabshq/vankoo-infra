@@ -40,8 +40,10 @@ Detalle y decisiones: `vankoo-dni-verification-function/docs/ARCHITECTURE.md`.
 ## Despliegue automatizado
 
 1. **Infraestructura** — `terraform/functions`: cuenta de almacenamiento (con el contenedor del paquete de código), plan Flex Consumption (`FC1`), Function App (Python 3.12),
-   Application Insights conectado al workspace `vankoo-logs`. `scripts/azure/azure-deploy.sh` aplica la capa (y ahora
-   exige `Microsoft.Web` y `Microsoft.Insights`); `azure-destroy.sh` la conserva salvo con `--all`, porque parada no cuesta.
+   Application Insights conectado al workspace `vankoo-logs`. `scripts/azure/azure-deploy.sh` aplica la capa al final, como paso
+   opcional: comprueba antes que `Microsoft.Web` y `Microsoft.Insights` estén registrados y, si algo falla (proveedores
+   sin registrar, cuota del plan), solo avisa para no bloquear el despliegue del resto de Vankoo. `azure-destroy.sh` la
+   conserva salvo con `--all`, porque parada no cuesta.
 2. **Código** — `.github/workflows/deploy.yml` del repo de la función: al fusionar en `develop` ejecuta ruff, mypy y
    pytest; si pasan, entra en Azure con OIDC (identidad administrada `vankoo-github-ci`, sin contraseñas), publica con
    `Azure/functions-action` (build remoto, `sku: flexconsumption`) y comprueba `GET /api/health`.
