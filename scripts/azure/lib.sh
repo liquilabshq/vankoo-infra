@@ -12,6 +12,12 @@ PROJECTS_DIR="$(cd "$INFRA_DIR/.." && pwd)"
 VANKOO_RG="${VANKOO_RG:-liquilabs-vankoo}"
 VANKOO_LOCATION="${VANKOO_LOCATION:-centralus}"
 
+# En Windows (Git Bash) az termina cada línea con \r\n. Los nombres e ids que se
+# leen con $(az ...) llevarían un \r invisible al final, y Azure rechaza la URL
+# con «400 Invalid URL». Se quita aquí, una vez para todos los scripts; con
+# pipefail el código de salida sigue siendo el de az. En Mac y Linux no cambia nada.
+az() { command az "$@" | tr -d '\r'; }
+
 log()  { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m[aviso] %s\033[0m\n' "$*" >&2; }
 die()  { printf '\033[1;31m[error] %s\033[0m\n' "$*" >&2; exit 1; }
