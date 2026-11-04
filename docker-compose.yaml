@@ -445,6 +445,65 @@ services:
       retries: 5
       start_period: 20s # Axon Server tarda un poco en inicializar el contexto la primera vez
 
+  # --- Notification Service ---
+  # Escucha los eventos de Kafka de los demás servicios y avisa a los usuarios: push al
+  # mobile del inversionista (Firebase Cloud Messaging) y email a la Mype. No tiene base
+  # de datos; ver el README de vankoo-notification-service.
+  notification-service:
+    build:
+      context: ../vankoo-notification-service
+      dockerfile: Dockerfile
+    hostname: notification-service
+    networks:
+      - main-network
+    ports:
+      # 3001 porque el 3000, propio de Node, ya lo usa Profile.
+      - "${NOTIFICATION_SERVICE_PORT:-3001}:3001"
+    environment:
+      # La imagen trae NODE_ENV=production, que exige un PUSH_TOPIC_SECRET propio. Este
+      # compose es un entorno de desarrollo, así que se acepta el secreto de desarrollo.
+      NODE_ENV: development
+      PORT: 3001
+      WEB_APP_URL: ${NOTIFICATION_WEB_APP_URL:-http://localhost:5173}
+      # Kafka
+      KAFKA_BROKERS: ${KAFKA_HOST:-kafka-broker}:${KAFKA_INTERNAL_PORT:-9094}
+      KAFKA_GROUP_ID: notification-delivery-v1
+      # false: un grupo nuevo no re-notifica el histórico de los tópicos.
+      KAFKA_FROM_BEGINNING: ${NOTIFICATION_KAFKA_FROM_BEGINNING:-false}
+      # Discovery Server (Eureka). También sirve para encontrar a Profile Service, al que
+      # se le pide el email de la Mype cuando el evento no lo trae.
+      EUREKA_HOST: discovery-server
+      EUREKA_PORT: 8761
+      INSTANCE_HOSTNAME: notification-service
+      # Push: FCM no tiene emulador, así que en local se escribe en el log. Para probar
+      # con un dispositivo real: NOTIFICATION_PUSH_PROVIDER=firebase y las FIREBASE_* en tu .env.
+      PUSH_PROVIDER: ${NOTIFICATION_PUSH_PROVIDER:-logging}
+      PUSH_TOPIC_SECRET: ${NOTIFICATION_PUSH_TOPIC_SECRET:-vankoo-local-push-topic-secret}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
+      FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
+      # Email: lo recoge Mailpit, igual que el de IAM (bandeja en http://localhost:8025).
+      EMAIL_PROVIDER: smtp
+      SMTP_HOST: ${MAIL_HOST:-mailpit}
+      SMTP_PORT: ${MAIL_PORT:-1025}
+      MAIL_FROM: ${MAIL_FROM:-Vankoo <no-reply@vankoo.dev>}
+    depends_on:
+      kafka-broker:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+      profile-service:
+        condition: service_started # Solo se le consulta al enviar un email a una Mype
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:3001/health/ready" ] # Listo cuando el consumidor de Kafka entra al grupo
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z # Usamos una versión específica para asegurar estabilidad
     networks:
