@@ -355,15 +355,15 @@ resource "azurerm_container_app" "profile" {
     value = local.db.profile_db_password
   }
 
-  # Mismo bucket y credenciales de S3 que Invoicing (vankoo-profile-documents-…).
+  # Bucket y credenciales de S3 propios de Profile (no los de Invoicing).
   secret {
     name  = "aws-access-key-id"
-    value = var.aws_access_key_id
+    value = var.profile_aws_access_key_id
   }
 
   secret {
     name  = "aws-secret-access-key"
-    value = var.aws_secret_access_key
+    value = var.profile_aws_secret_access_key
   }
 
   # Container Apps no admite secretos vacíos: solo se crea si hay clave.
@@ -443,11 +443,11 @@ resource "azurerm_container_app" "profile" {
       }
       env {
         name  = "AWS_REGION"
-        value = var.aws_region
+        value = var.profile_aws_region
       }
       env {
         name  = "AWS_S3_BUCKET"
-        value = var.aws_s3_bucket
+        value = var.profile_aws_s3_bucket
       }
       env {
         name        = "AWS_ACCESS_KEY_ID"

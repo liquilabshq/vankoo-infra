@@ -46,9 +46,15 @@ Terraform la pone al crearlas y después no la toca. El pipeline entra en Azure
 con OIDC, como la identidad administrada `vankoo-github-ci`, que solo puede
 subir imágenes al registro y actualizar esas apps.
 
-`--env-file` toma del `.env` solo las credenciales del bucket de S3 que
-comparten Invoicing y Profile (`AWS_REGION`, `AWS_S3_BUCKET`, `AWS_ACCESS_KEY_ID`,
-`AWS_SECRET_ACCESS_KEY`). El resto de secretos (contraseñas de las bases de
+`--env-file` toma del `.env` solo las credenciales de los dos buckets de S3, que
+son distintos y pueden ser de cuentas de AWS distintas:
+- **Invoicing:** `AWS_REGION`, `AWS_S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`.
+- **Profile:** `PROFILE_AWS_REGION`, `PROFILE_AWS_S3_BUCKET`, `PROFILE_AWS_ACCESS_KEY_ID`,
+  `PROFILE_AWS_SECRET_ACCESS_KEY`.
+
+Cada `apply` de `apps` vuelve a escribir esos valores en las Container Apps: si
+el `.env` de quien despliega tiene otro bucket, Terraform lo cambiará (revisa el
+plan de Invoicing). El resto de secretos (contraseñas de las bases de
 datos, clave JWT, clave del OCR) los genera Terraform y se los pasa a las apps:
 nadie tiene que copiarlos.
 
