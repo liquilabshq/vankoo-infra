@@ -27,8 +27,9 @@ variable "jwt_expiration_days" {
   default     = 7
 }
 
-# Credenciales del bucket de S3 donde Invoicing guarda los PDF. No van a git:
-# se pasan como TF_VAR_aws_* desde la terminal.
+# Credenciales del bucket de S3 que comparten Invoicing (PDF de las facturas) y
+# Profile (documentos y fotos). No van a git: se pasan como TF_VAR_aws_* desde la
+# terminal o con --env-file.
 variable "aws_region" {
   type = string
 }
@@ -45,4 +46,20 @@ variable "aws_access_key_id" {
 variable "aws_secret_access_key" {
   type      = string
   sensitive = true
+}
+
+# Verificación automática del DNI del inversor en Profile (Azure Function
+# vankoo-dni-verification-…, que no gestiona este Terraform). Vacías = apagada:
+# el KYC del inversor queda manual.
+variable "dni_verification_url" {
+  description = "URL del endpoint verify-dni de la función. Vacía desactiva la verificación."
+  type        = string
+  default     = ""
+}
+
+variable "dni_verification_key" {
+  description = "Clave de la función (x-functions-key). Vacía si la función no la pide."
+  type        = string
+  sensitive   = true
+  default     = ""
 }

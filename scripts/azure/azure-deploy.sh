@@ -8,7 +8,7 @@
 #   --skip-build       reutiliza las imágenes de images.auto.tfvars
 #   --env-file <ruta>  toma las credenciales de S3 (AWS_*) de ese .env
 #
-# Necesita las credenciales del bucket de S3 de Invoicing, o con --env-file o
+# Necesita las credenciales del bucket de S3 (Invoicing y Profile), o con --env-file o
 # en el entorno:
 #   export TF_VAR_aws_region=...            TF_VAR_aws_s3_bucket=...
 #   export TF_VAR_aws_access_key_id=...     TF_VAR_aws_secret_access_key=...
@@ -32,7 +32,7 @@ done
 require_tools az terraform docker git
 
 for var in TF_VAR_aws_region TF_VAR_aws_s3_bucket TF_VAR_aws_access_key_id TF_VAR_aws_secret_access_key; do
-  [[ -n "${!var:-}" ]] || die "Falta $var (credenciales del bucket de S3 de Invoicing). Ver la cabecera de este script."
+  [[ -n "${!var:-}" ]] || die "Falta $var (credenciales del bucket de S3 de Invoicing y Profile). Ver la cabecera de este script."
 done
 
 setup_terraform_env
