@@ -60,6 +60,22 @@ cd ../vankoo-infra && docker compose -f docker-compose.yaml -f docker-compose.ky
 
 `docker-compose.kyc-demo.yaml` solo añade `KYC_DEMO_CA_PATH` y monta `demo-kyc/` de solo lectura. **Nunca en producción.** Las reglas y las opciones de `demo-ficha` están en `docs/KYC_RULES.md` de risk.
 
+### Notificaciones (push y email)
+
+`notification-service` (puerto 3001) consume los eventos de Kafka y avisa a los usuarios:
+
+- **Emails**: llegan a Mailpit, igual que los de IAM. Se leen en http://localhost:8025.
+- **Push**: con `NOTIFICATION_PUSH_PROVIDER=logging` (por defecto) no se envía nada, se escribe en el log del contenedor (`docker compose logs -f notification-service`). Para enviarlo a un dispositivo real, pon `firebase` y las variables `FIREBASE_*` en tu `.env`.
+- **API**: los dispositivos se registran por el gateway en `/notification/api/v1/device-registrations`. La documentación está en http://localhost:3001/reference y en el Scalar del gateway.
+
+Para probarlo sin los demás servicios, publica un evento desde kafka-ui (http://localhost:9000). Por ejemplo, en el tópico `vankoo.iam.events`:
+
+```json
+{ "id": "40000000-0000-4000-8000-000000000001", "email": "mype@vankoo.test", "roles": ["ROLE_MYPE"] }
+```
+
+Al momento aparece el email de bienvenida en Mailpit. Los eventos que se notifican están en el README de `vankoo-notification-service`.
+
 > Nota: DataGrip no tiene terminal integrada, así que deberás descargar el plugin `Terminal` oficial de JetBrains si quieres ejecutar los comandos desde el IDE. En caso quieras ejecutarlos manualmente sin los scripts, tendrás que hacerlo desde una terminal externa como Git Bash o WSL (en Windows) o Terminal (en macOS o Linux). También te sugiero descargar Warp, que es una terminal más moderna y con mejor experiencia de usuario que las terminales tradicionales, pero no es indispensable.
 
 ### Para ver los logs de los servicios:
