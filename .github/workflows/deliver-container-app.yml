@@ -1,7 +1,7 @@
 # Entrega continua de un microservicio en Azure Container Apps.
 #
 # Workflow reutilizable: cada servicio lo llama desde su propio pipeline cuando
-# su CI ya pasó. Construye la imagen, la publica en el registro (ACR) y la
+# su CI ya pasó. Construye y escanea la imagen, la publica en el registro (ACR) y la
 # despliega en su Container App del ambiente de desarrollo.
 #
 # Uso desde el repo del servicio:
@@ -33,6 +33,11 @@ name: Deliver container app
 on:
   workflow_call:
     inputs:
+      image-policy:
+        description: Contrato de entrega escaneada. Los callers nuevos pueden exigir scanned-v1.
+        required: false
+        type: string
+        default: scanned-v1
       image:
         description: Nombre de la imagen en el registro (p. ej. invoicing-service).
         required: true
@@ -80,67 +85,163 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  publish:
-    name: Build and publish image
+  build-scan:
+    name: Build and scan image
     runs-on: ubuntu-latest
     outputs:
-      image-ref: ${{ steps.tags.outputs.image-ref }}
+      image-id: ${{ steps.candidate.outputs.image-id }}
+      archive-sha: ${{ steps.candidate.outputs.archive-sha }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
     steps:
-      - uses: actions/checkout@v4
-
-      # Misma convención que scripts/azure/build-push.sh: la etiqueta es el
-      # commit corto. Se añade la del ambiente para saber qué corre en él.
-      - name: Compute tags
-        id: tags
+      - name: Validate image policy
+        shell: bash
         env:
-          REPOSITORY: ${{ inputs.registry }}.azurecr.io/${{ inputs.image }}
-          ENVIRONMENT: ${{ inputs.environment }}
-        run: |
-          sha="${GITHUB_SHA::7}"
-          {
-            echo "image-ref=$REPOSITORY:$sha"
-            echo "tags<<EOF"
-            echo "$REPOSITORY:$sha"
-            echo "$REPOSITORY:$ENVIRONMENT"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          IMAGE_POLICY: ${{ inputs.image-policy }}
+        run: test "$IMAGE_POLICY" = scanned-v1
 
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          persist-credentials: false
 
-      - name: Registry login
-        run: az acr login --name "${{ inputs.registry }}"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      - name: Build local candidate (without publishing)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}
           platforms: linux/amd64
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
+          load: true
+          push: false
+          tags: vankoo-security-candidate:${{ github.sha }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=${{ inputs.image }}
           cache-to: type=gha,mode=max,scope=${{ inputs.image }}
 
+      - name: Save candidate and record its identity
+        id: candidate
+        shell: bash
+        env:
+          LOCAL_IMAGE: vankoo-security-candidate:${{ github.sha }}
+        run: |
+          archive="$RUNNER_TEMP/vankoo-image.tar"
+          image_id="$(docker image inspect --format '{{.Id}}' "$LOCAL_IMAGE")"
+          [[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker image save --output "$archive" "$image_id"
+          archive_sha="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          echo "image-id=$image_id" >> "$GITHUB_OUTPUT"
+          echo "archive-sha=$archive_sha" >> "$GITHUB_OUTPUT"
+          echo "artifact-name=scanned-image-$(cat /proc/sys/kernel/random/uuid)" >> "$GITHUB_OUTPUT"
+          printf '{}\n' > "$RUNNER_TEMP/vankoo-trivy.yaml"
+          touch "$RUNNER_TEMP/vankoo-trivy.ignore"
+
+      - name: Scan the candidate archive
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_IGNOREFILE: ${{ runner.temp }}/vankoo-trivy.ignore
+        with:
+          scan-type: image
+          input: ${{ runner.temp }}/vankoo-image.tar
+          trivy-config: ${{ runner.temp }}/vankoo-trivy.yaml
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: '1'
+
+      - name: Upload the approved archive
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.candidate.outputs.artifact-name }}
+          path: ${{ runner.temp }}/vankoo-image.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    name: Publish approved image
+    needs: build-scan
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    outputs:
+      image-ref: ${{ steps.publish-approved.outputs.image-ref }}
+    steps:
+      - name: Download the approved archive
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.build-scan.outputs.artifact-id }}
+          path: ${{ runner.temp }}/approved-image
+          merge-multiple: true
+
+      - name: Verify the archive hash and load the approved image
+        shell: bash
+        env:
+          ARCHIVE_SHA: ${{ needs.build-scan.outputs.archive-sha }}
+          IMAGE_ID: ${{ needs.build-scan.outputs.image-id }}
+        run: |
+          archive="$RUNNER_TEMP/approved-image/vankoo-image.tar"
+          [[ "$ARCHIVE_SHA" =~ ^[a-f0-9]{64}$ && "$IMAGE_ID" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "$ARCHIVE_SHA  $archive" | sha256sum --check
+          docker image load --input "$archive"
+          [[ "$(docker image inspect --format '{{.Id}}' "$IMAGE_ID")" == "$IMAGE_ID" ]]
+
+      - name: Azure login (OIDC)
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Registry login
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: az acr login --name "$REGISTRY"
+
+      - name: Publish approved image and capture its immutable digest
+        id: publish-approved
+        shell: bash
+        env:
+          IMAGE_ID: ${{ needs.build-scan.outputs.image-id }}
+          REPOSITORY: ${{ inputs.registry }}.azurecr.io/${{ inputs.image }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          sha_tag="$REPOSITORY:${GITHUB_SHA::7}"
+          env_tag="$REPOSITORY:$ENVIRONMENT"
+          docker tag "$IMAGE_ID" "$sha_tag"
+          docker tag "$IMAGE_ID" "$env_tag"
+          push_log="$(mktemp)"
+          trap 'rm -f "$push_log"' EXIT
+          docker push --platform linux/amd64 "$sha_tag" | tee "$push_log"
+          digest="$(sed -nE 's/^[^[:space:]]+: digest: (sha256:[a-f0-9]{64}) size: [0-9]+$/\1/p' "$push_log")"
+          if [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::Cannot identify the immutable digest for the scanned image."
+            exit 1
+          fi
+          image_ref="$REPOSITORY@$digest"
+          remote_id="$(docker manifest inspect "$image_ref" | jq -er '.config.digest')"
+          if [[ "$remote_id" != "$IMAGE_ID" ]]; then
+            echo "::error::The published manifest does not match the scanned image ID."
+            exit 1
+          fi
+          docker push --platform linux/amd64 "$env_tag"
+          echo "image-ref=$image_ref" >> "$GITHUB_OUTPUT"
+
       - name: Summary
-        run: echo "Imagen publicada → \`${{ steps.tags.outputs.image-ref }}\`" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          DEPLOY_IMAGE: ${{ steps.publish-approved.outputs.image-ref }}
+        run: echo "Imagen escaneada y publicada → \`$DEPLOY_IMAGE\`" >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     name: Deploy to ${{ inputs.environment }}
     needs: publish
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
     environment: ${{ inputs.environment }}
     # Un despliegue por app a la vez; el siguiente espera en lugar de cancelar.
     concurrency:
@@ -152,7 +253,7 @@ jobs:
       IMAGE: ${{ needs.publish.outputs.image-ref }}
     steps:
       - name: Azure login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
