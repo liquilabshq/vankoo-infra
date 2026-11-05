@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Apaga Vankoo en Azure destruyendo las capas apps, data y base, en ese orden:
-# las apps, las bases de datos y el registro de imágenes. Coste 0 después; los
-# datos se pierden y se empieza de cero en el siguiente azure-deploy.sh.
+# Apaga Vankoo en Azure destruyendo las capas apps, messaging, data y base, en
+# ese orden: las apps, el Event Hubs, las bases de datos y el registro de
+# imágenes. Coste 0 después; los datos se pierden y se empieza de cero en el
+# siguiente azure-deploy.sh.
 #
 # Se conservan la capa core (environment, workspace de logs y OCR, gratis
 # mientras no hay apps), la capa functions (función de DNI, plan de consumo) y
@@ -32,6 +33,7 @@ tf_destroy apps ${YES[@]+"${YES[@]}"} \
   -var 'images={}' \
   -var aws_region=unused -var aws_s3_bucket=unused \
   -var aws_access_key_id=unused -var aws_secret_access_key=unused
+tf_destroy messaging ${YES[@]+"${YES[@]}"}
 tf_destroy data ${YES[@]+"${YES[@]}"}
 tf_destroy base ${YES[@]+"${YES[@]}"}
 
