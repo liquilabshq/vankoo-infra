@@ -6,12 +6,14 @@
 # Uso: scripts/azure/azure-deploy.sh [--yes] [--skip-build] [--env-file <ruta>]
 #   --yes              no pide confirmación en cada terraform apply
 #   --skip-build       reutiliza las imágenes de images.auto.tfvars
-#   --env-file <ruta>  toma las credenciales de S3 (AWS_*) de ese .env
+#   --env-file <ruta>  toma las credenciales de S3 (AWS_* y PROFILE_AWS_*) de ese .env
 #
-# Necesita las credenciales del bucket de S3 de Invoicing, o con --env-file o
-# en el entorno:
+# Necesita las credenciales de los dos buckets de S3, el de Invoicing (AWS_*) y el
+# de Profile (PROFILE_AWS_*), o con --env-file o en el entorno:
 #   export TF_VAR_aws_region=...            TF_VAR_aws_s3_bucket=...
 #   export TF_VAR_aws_access_key_id=...     TF_VAR_aws_secret_access_key=...
+#   export TF_VAR_profile_aws_region=...    TF_VAR_profile_aws_s3_bucket=...
+#   export TF_VAR_profile_aws_access_key_id=...  TF_VAR_profile_aws_secret_access_key=...
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 YES=()
@@ -31,8 +33,10 @@ done
 
 require_tools az terraform docker git
 
-for var in TF_VAR_aws_region TF_VAR_aws_s3_bucket TF_VAR_aws_access_key_id TF_VAR_aws_secret_access_key; do
-  [[ -n "${!var:-}" ]] || die "Falta $var (credenciales del bucket de S3 de Invoicing). Ver la cabecera de este script."
+for var in TF_VAR_aws_region TF_VAR_aws_s3_bucket TF_VAR_aws_access_key_id TF_VAR_aws_secret_access_key \
+           TF_VAR_profile_aws_region TF_VAR_profile_aws_s3_bucket \
+           TF_VAR_profile_aws_access_key_id TF_VAR_profile_aws_secret_access_key; do
+  [[ -n "${!var:-}" ]] || die "Falta $var (credenciales de S3 de Invoicing o de Profile). Ver la cabecera de este script."
 done
 
 setup_terraform_env

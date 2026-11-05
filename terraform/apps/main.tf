@@ -1,6 +1,7 @@
 # Capa apps: una Container App por servicio. Solo el gateway acepta tráfico de
 # internet; el resto tiene ingress interno y el gateway los alcanza por el DNS
-# del environment (http://<nombre-de-la-app>). Fase 1: gateway, IAM e Invoicing.
+# del environment (http://<nombre-de-la-app>). Fase 1: gateway, IAM, Invoicing y
+# Profile.
 
 data "azurerm_resource_group" "vankoo" {
   name = var.resource_group_name
@@ -46,6 +47,10 @@ locals {
   gateway_app   = "vankoo-api-gateway"
   iam_app       = "vankoo-iam-service"
   invoicing_app = "vankoo-invoicing-service"
+  profile_app   = "vankoo-profile-service"
+
+  # La verificación automática del DNI se enciende al pasar la URL de la función.
+  dni_verification_enabled = var.dni_verification_url != ""
 }
 
 # Clave de firma de los JWT: la generan Terraform y la comparten IAM (firma) y
@@ -325,6 +330,181 @@ resource "azurerm_container_app" "invoicing" {
   }
 }
 
+# --- Profile Service ----------------------------------------------------------
+
+resource "azurerm_container_app" "profile" {
+  name                         = local.profile_app
+  resource_group_name          = data.azurerm_resource_group.vankoo.name
+  container_app_environment_id = local.core.environment_id
+  revision_mode                = "Single"
+  workload_profile_name        = "Consumption"
+
+  registry {
+    server               = local.base.acr_login_server
+    username             = local.base.acr_admin_username
+    password_secret_name = "acr-password"
+  }
+
+  secret {
+    name  = "acr-password"
+    value = local.base.acr_admin_password
+  }
+
+  secret {
+    name  = "profile-db-password"
+    value = local.db.profile_db_password
+  }
+
+  # Bucket y credenciales de S3 propios de Profile (no los de Invoicing).
+  secret {
+    name  = "aws-access-key-id"
+    value = var.profile_aws_access_key_id
+  }
+
+  secret {
+    name  = "aws-secret-access-key"
+    value = var.profile_aws_secret_access_key
+  }
+
+  # Container Apps no admite secretos vacíos: solo se crea si hay clave.
+  dynamic "secret" {
+    for_each = var.dni_verification_key != "" ? [1] : []
+    content {
+      name  = "dni-verification-key"
+      value = var.dni_verification_key
+    }
+  }
+
+  ingress {
+    external_enabled = false
+    target_port      = 3000
+
+    traffic_weight {
+      latest_revision = true
+      percentage      = 100
+    }
+  }
+
+  template {
+    min_replicas = var.min_replicas
+    max_replicas = 1
+
+    container {
+      name   = "profile-service"
+      image  = var.images["profile-service"]
+      cpu    = 0.25
+      memory = "0.5Gi"
+
+      env {
+        name  = "PORT"
+        value = "3000"
+      }
+      env {
+        name  = "PROFILE_DB_HOST"
+        value = local.db.profile_db_host
+      }
+      env {
+        name  = "PROFILE_DB_PORT"
+        value = "5432"
+      }
+      env {
+        name  = "PROFILE_DB_USER"
+        value = local.db.profile_db_username
+      }
+      env {
+        name        = "PROFILE_DB_PASS"
+        secret_name = "profile-db-password"
+      }
+      env {
+        name  = "PROFILE_DB_NAME"
+        value = local.db.profile_db_name
+      }
+      # Azure Database for PostgreSQL exige TLS.
+      env {
+        name  = "PROFILE_DB_SSL"
+        value = "true"
+      }
+      # PARCHE TEMPORAL (fase 1, sin Kafka en Azure): Profile no arranca sin broker,
+      # así que se apaga. Mientras tanto no consume vankoo.iam.events y no crea el
+      # perfil de los usuarios nuevos. Para Event Hubs, ver «Trampas conocidas» en
+      # terraform/README.md.
+      env {
+        name  = "KAFKA_ENABLED"
+        value = "false"
+      }
+      # Sin discovery server en Azure: el gateway llega por el DNS del environment.
+      env {
+        name  = "EUREKA_ENABLED"
+        value = "false"
+      }
+      env {
+        name  = "STORAGE_PROVIDER"
+        value = "s3"
+      }
+      env {
+        name  = "AWS_REGION"
+        value = var.profile_aws_region
+      }
+      env {
+        name  = "AWS_S3_BUCKET"
+        value = var.profile_aws_s3_bucket
+      }
+      env {
+        name        = "AWS_ACCESS_KEY_ID"
+        secret_name = "aws-access-key-id"
+      }
+      env {
+        name        = "AWS_SECRET_ACCESS_KEY"
+        secret_name = "aws-secret-access-key"
+      }
+      env {
+        name  = "DNI_VERIFICATION_ENABLED"
+        value = tostring(local.dni_verification_enabled)
+      }
+      dynamic "env" {
+        for_each = local.dni_verification_enabled ? [1] : []
+        content {
+          name  = "DNI_VERIFICATION_URL"
+          value = var.dni_verification_url
+        }
+      }
+      dynamic "env" {
+        for_each = var.dni_verification_key != "" ? [1] : []
+        content {
+          name        = "DNI_VERIFICATION_KEY"
+          secret_name = "dni-verification-key"
+        }
+      }
+
+      # Profile no tiene endpoint de salud: GET /api/v1 (el «Hello» de
+      # AppController) responde en cuanto Nest escucha. Las rutas son /api/v1/...
+      startup_probe {
+        transport               = "HTTP"
+        port                    = 3000
+        path                    = "/api/v1"
+        interval_seconds        = 10
+        failure_count_threshold = 30
+      }
+      liveness_probe {
+        transport = "HTTP"
+        port      = 3000
+        path      = "/api/v1"
+      }
+      readiness_probe {
+        transport = "HTTP"
+        timeout   = 5
+        port      = 3000
+        path      = "/api/v1"
+      }
+    }
+  }
+
+  # Igual que en IAM: la imagen la gestiona el pipeline del repo.
+  lifecycle {
+    ignore_changes = [template[0].container[0].image]
+  }
+}
+
 # --- API Gateway --------------------------------------------------------------
 
 resource "azurerm_container_app" "gateway" {
@@ -391,6 +571,10 @@ resource "azurerm_container_app" "gateway" {
       env {
         name  = "INVOICING_SERVICE_URI"
         value = "http://${azurerm_container_app.invoicing.name}"
+      }
+      env {
+        name  = "PROFILE_SERVICE_URI"
+        value = "http://${azurerm_container_app.profile.name}"
       }
 
       startup_probe {

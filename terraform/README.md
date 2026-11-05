@@ -38,17 +38,23 @@ Para subir una versión nueva del gateway, basta con volver a ejecutar
 `azure-deploy.sh --env-file .env`: reconstruye las imágenes y Terraform solo
 actualiza las apps cuya imagen cambió.
 
-IAM e Invoicing no se actualizan así: cada merge a `develop` de su repo dispara
+IAM, Invoicing y Profile no se actualizan así: cada merge a `develop` de su repo dispara
 su pipeline, que construye la imagen, la publica en el registro y la despliega
 (workflow reutilizable `.github/workflows/deliver-container-app.yml` de este
 repo). Por eso sus Container Apps llevan `ignore_changes` sobre la imagen:
 Terraform la pone al crearlas y después no la toca. El pipeline entra en Azure
 con OIDC, como la identidad administrada `vankoo-github-ci`, que solo puede
-subir imágenes al registro y actualizar esas dos apps.
+subir imágenes al registro y actualizar esas apps.
 
-`--env-file` toma del `.env` solo las credenciales del bucket de S3 de
-Invoicing (`AWS_REGION`, `AWS_S3_BUCKET`, `AWS_ACCESS_KEY_ID`,
-`AWS_SECRET_ACCESS_KEY`). El resto de secretos (contraseñas de las bases de
+`--env-file` toma del `.env` solo las credenciales de los dos buckets de S3, que
+son distintos y pueden ser de cuentas de AWS distintas:
+- **Invoicing:** `AWS_REGION`, `AWS_S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`.
+- **Profile:** `PROFILE_AWS_REGION`, `PROFILE_AWS_S3_BUCKET`, `PROFILE_AWS_ACCESS_KEY_ID`,
+  `PROFILE_AWS_SECRET_ACCESS_KEY`.
+
+Cada `apply` de `apps` vuelve a escribir esos valores en las Container Apps: si
+el `.env` de quien despliega tiene otro bucket, Terraform lo cambiará (revisa el
+plan de Invoicing). El resto de secretos (contraseñas de las bases de
 datos, clave JWT, clave del OCR) los genera Terraform y se los pasa a las apps:
 nadie tiene que copiarlos.
 
@@ -69,7 +75,7 @@ nadie tiene que copiarlos.
 |---|---|---|
 | `core` | El sufijo de los nombres únicos, el OCR (Document Intelligence F0), el workspace de logs y el Container Apps Environment | Se conserva: sin apps no cuesta nada, y conservar el environment mantiene la URL del gateway |
 | `base` | Registro de imágenes | Se destruye |
-| `data` | Una base de datos por servicio: PostgreSQL de IAM, MongoDB de Invoicing | Se destruye |
+| `data` | Una base de datos por servicio: PostgreSQL de IAM y de Profile, MongoDB de Invoicing | Se destruye |
 | `apps` | Una Container App por servicio | Se destruye |
 
 Solo el gateway acepta tráfico de internet. Los servicios tienen ingress interno
@@ -107,6 +113,19 @@ datos se perderán antes de detener nada.
   `azurerm` no tiene ese campo.
 - **Central US a veces no tiene capacidad** para environments nuevos
   (`ManagedEnvironmentCapacityHeavyUsageError`). Reintentar suele bastar.
+- **Profile corre con `KAFKA_ENABLED=false`** mientras no haya broker en Azure:
+  sin Kafka no arrancaría. Mientras tanto no consume `vankoo.iam.events`, así
+  que no crea el perfil (empresa o inversor) de los usuarios que se registran en
+  Azure. Para conectarlo a Azure Event Hubs no hay que tocar su código, solo su
+  Container App en `apps/main.tf`:
+  - Namespace de nivel **Standard** (el Basic no tiene endpoint Kafka) y un Event
+    Hub por topic: `vankoo.iam.events`, `risk.green-certifications.v1`,
+    `risk.company-verifications.v1` y `vankoo.profile.events`.
+  - `KAFKA_ENABLED=true`, `KAFKA_BROKERS=<namespace>.servicebus.windows.net:9093`,
+    `KAFKA_SSL=true`, `KAFKA_SASL_MECHANISM=plain`,
+    `KAFKA_SASL_USERNAME=$ConnectionString` y `KAFKA_SASL_PASSWORD` como secreto con
+    la cadena de conexión del namespace.
+- **Profile usa `GET /api/v1` como sonda**: aún no tiene endpoint de salud.
 - **Invoicing usa `/health/live` como sonda de readiness** mientras no haya
   Kafka en Azure: su chequeo de Kafka espera 60 s sin broker. Volver a
   `/health/ready` al desplegar Kafka.

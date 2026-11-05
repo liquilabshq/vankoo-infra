@@ -1,6 +1,6 @@
 # Capa data: una base de datos por servicio, como en el diagrama de
-# contenedores. Fase 1: IAM (PostgreSQL) e Invoicing (MongoDB). Se destruye al
-# apagar; los datos de demo se vuelven a sembrar al encender.
+# contenedores. Fase 1: IAM y Profile (PostgreSQL) e Invoicing (MongoDB). Se
+# destruye al apagar; los datos de demo se vuelven a sembrar al encender.
 
 data "azurerm_resource_group" "vankoo" {
   name = var.resource_group_name
@@ -64,6 +64,49 @@ resource "azurerm_postgresql_flexible_server_firewall_rule" "iam_allow_azure" {
 resource "azurerm_postgresql_flexible_server_database" "iam" {
   name      = "vankoo_iam_db"
   server_id = azurerm_postgresql_flexible_server.iam.id
+  charset   = "UTF8"
+  collation = "en_US.utf8"
+}
+
+# --- Profile Database (PostgreSQL) ------------------------------------------
+# Igual que la de IAM. Profile crea sus tablas al arrancar (TypeORM synchronize)
+# y se conecta por TLS (PROFILE_DB_SSL=true en su Container App).
+
+resource "random_password" "profile_db" {
+  length      = 32
+  special     = false
+  min_upper   = 2
+  min_lower   = 2
+  min_numeric = 2
+}
+
+resource "azurerm_postgresql_flexible_server" "profile" {
+  name                          = "vankoo-profile-db-${local.suffix}"
+  resource_group_name           = data.azurerm_resource_group.vankoo.name
+  location                      = var.location
+  version                       = "16"
+  sku_name                      = "B_Standard_B1ms"
+  storage_mb                    = 32768
+  backup_retention_days         = 7
+  administrator_login           = local.admin_username
+  administrator_password        = random_password.profile_db.result
+  public_network_access_enabled = true
+
+  lifecycle {
+    ignore_changes = [zone]
+  }
+}
+
+resource "azurerm_postgresql_flexible_server_firewall_rule" "profile_allow_azure" {
+  name             = "AllowAzureServices"
+  server_id        = azurerm_postgresql_flexible_server.profile.id
+  start_ip_address = "0.0.0.0"
+  end_ip_address   = "0.0.0.0"
+}
+
+resource "azurerm_postgresql_flexible_server_database" "profile" {
+  name      = "vankoo_profile_db"
+  server_id = azurerm_postgresql_flexible_server.profile.id
   charset   = "UTF8"
   collation = "en_US.utf8"
 }
