@@ -64,6 +64,18 @@ fi
 start_container_apps
 tf_apply apps ${YES[@]+"${YES[@]}"}
 
+# Capa opcional: la función de verificación de DNI. Va al final y no bloquea: si falla
+# (proveedores sin registrar, cuota del plan Flex, política de regiones...), el resto de
+# Vankoo ya está desplegado y solo se avisa. No cuesta parada: se aplica, pero no se
+# destruye al apagar (azure-destroy.sh --all la borra).
+if (check_providers Microsoft.Web Microsoft.Insights && tf_apply functions ${YES[@]+"${YES[@]}"}); then
+  FUNCTIONS_URL="$(tf_output functions verify_dni_url)" || FUNCTIONS_URL="(sin URL)"
+else
+  FUNCTIONS_URL="(no desplegada)"
+  warn "La capa functions no se aplicó; el resto de Vankoo sí. Para reintentarla: source scripts/azure/lib.sh && setup_terraform_env && tf_apply functions"
+fi
+
 log "Vankoo está en pie"
 echo "Gateway: $(tf_output apps gateway_url)"
 echo "Scalar:  $(tf_output apps gateway_scalar_url)"
+echo "DNI:     $FUNCTIONS_URL"
