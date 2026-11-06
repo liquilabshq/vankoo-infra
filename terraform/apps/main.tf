@@ -114,6 +114,11 @@ resource "azurerm_container_app" "iam" {
     value = local.db.iam_db_password
   }
 
+  secret {
+    name  = "kafka-connection-string"
+    value = lookup(local.msg.kafka_connection_strings, "iam", "")
+  }
+
   ingress {
     external_enabled = false
     target_port      = 8081
@@ -174,6 +179,24 @@ resource "azurerm_container_app" "iam" {
       env {
         name  = "IAM_GATEWAY_HOST"
         value = "${local.gateway_app}.${local.domain}"
+      }
+      # Kafka contra Azure Event Hubs (capa messaging). KAFKA_ENABLED activa el
+      # publicador de eventos del perfil azure (vankoo.events.enabled).
+      env {
+        name  = "KAFKA_ENABLED"
+        value = "true"
+      }
+      env {
+        name  = "KAFKA_BROKERS"
+        value = local.kafka_bootstrap_server
+      }
+      env {
+        name  = "KAFKA_SASL_USERNAME"
+        value = local.kafka_sasl_username
+      }
+      env {
+        name        = "KAFKA_SASL_PASSWORD"
+        secret_name = "kafka-connection-string"
       }
 
       # Spring Boot tarda en arrancar: la sonda de arranque le da hasta 5 min
@@ -250,6 +273,11 @@ resource "azurerm_container_app" "invoicing" {
     value = var.aws_secret_access_key
   }
 
+  secret {
+    name  = "kafka-connection-string"
+    value = lookup(local.msg.kafka_connection_strings, "invoicing", "")
+  }
+
   ingress {
     external_enabled = false
     target_port      = 8080
@@ -313,6 +341,46 @@ resource "azurerm_container_app" "invoicing" {
         secret_name = "aws-secret-access-key"
       }
       # Sin discovery server en Azure: el gateway llega por el DNS del environment.
+      # Kafka contra Azure Event Hubs (capa messaging). Ver docs/ARCHITECTURE.md de
+      # vankoo-invoicing-service, «Conexión con Kafka».
+      env {
+        name  = "KafkaSettings__BootstrapServers"
+        value = local.kafka_bootstrap_server
+      }
+      env {
+        name  = "KafkaSettings__SecurityProtocol"
+        value = "SaslSsl"
+      }
+      env {
+        name  = "KafkaSettings__SaslMechanism"
+        value = "Plain"
+      }
+      env {
+        name  = "KafkaSettings__SaslUsername"
+        value = local.kafka_sasl_username
+      }
+      env {
+        name        = "KafkaSettings__SaslPassword"
+        secret_name = "kafka-connection-string"
+      }
+      # Event Hubs exige más de 20 s por petición; el mensaje debe poder esperar más que eso.
+      env {
+        name  = "KafkaSettings__RequestTimeoutMs"
+        value = "60000"
+      }
+      env {
+        name  = "KafkaSettings__MessageTimeoutMs"
+        value = "120000"
+      }
+      # Azure corta las conexiones inactivas a los 240 s.
+      env {
+        name  = "KafkaSettings__MetadataMaxAgeMs"
+        value = "180000"
+      }
+      env {
+        name  = "KafkaSettings__SocketKeepaliveEnable"
+        value = "true"
+      }
       env {
         name  = "Eureka__Client__Enabled"
         value = "false"
@@ -334,16 +402,11 @@ resource "azurerm_container_app" "invoicing" {
       readiness_probe {
         transport = "HTTP"
         # Por defecto Container Apps espera 1 s, y el chequeo de readiness
-        # consulta dependencias externas: con 1 s caducaba y la app nunca
-        # recibía tráfico.
-        timeout = 5
+        # consulta dependencias externas (MongoDB, S3 y Kafka, este con hasta
+        # 5 s de espera): con 1 s caducaba y la app nunca recibía tráfico.
+        timeout = 10
         port    = 8080
-        # PARCHE TEMPORAL (fase 1, sin Kafka en Azure): /health/ready incluye el
-        # chequeo de Kafka, que sin broker no falla rápido sino que espera hasta
-        # 60 s (MessageTimeout del productor). La sonda caduca siempre y la app
-        # nunca recibe tráfico. Volver a "/health/ready" cuando Kafka esté
-        # desplegado en el environment (fase 2).
-        path = "/health/live"
+        path    = "/health/ready"
       }
     }
   }

@@ -104,8 +104,9 @@ dirección y la autenticación.
 | Los topics se crean al publicar | Los crea Terraform: los clientes no pueden (`auto-create-topics: false`) |
 
 - **Nivel Standard, 1 unidad de rendimiento.** Es el más barato con endpoint de
-  Kafka (el Basic no lo tiene) y admite hasta 10 event hubs; Vankoo usa 8, en
-  `locals.topics` de `messaging/main.tf`. Un topic nuevo se añade ahí.
+  Kafka (el Basic no lo tiene) y admite hasta 10 event hubs. Vankoo usa los 10
+  (`locals.topics` de `messaging/main.tf`): siete de eventos y tres colas de
+  mensajes fallidos (DLQ). Un topic más obliga a subir de nivel o a juntar topics.
 - **Una regla de acceso por servicio** (`locals.clients`), con permiso para enviar
   y escuchar, no para administrar. Su cadena de conexión llega a cada Container
   App como el secreto `kafka-connection-string`.
@@ -123,8 +124,14 @@ dirección y la autenticación.
   `gzip` o ninguna. Ver
   [Kafka client configurations for Event Hubs](https://learn.microsoft.com/en-us/azure/event-hubs/apache-kafka-configurations).
 
-Servicios conectados: Profile. IAM, Invoicing, Finance, Investment y
+Servicios conectados: Profile, IAM e Invoicing. Finance, Investment y
 Notification se conectan en las siguientes fases.
+
+- **IAM** (Spring Cloud Stream): `KAFKA_ENABLED`, `KAFKA_BROKERS`,
+  `KAFKA_SASL_USERNAME` y `KAFKA_SASL_PASSWORD`; su perfil `azure` arma el resto.
+- **Invoicing** (Confluent .NET): `KafkaSettings__*`, con los timeouts que pide
+  Event Hubs. Su health check de Kafka pide los metadatos del broker en lugar de
+  publicar en un topic de prueba, porque no queda sitio para uno.
 
 ## Añadir un servicio
 
@@ -166,7 +173,7 @@ datos se perderán antes de detener nada.
   sin el namespace, las apps recibirían una dirección y una clave vacías.
   `azure-deploy.sh` ya lo hace en orden.
 - **Profile usa `GET /api/v1` como sonda**: aún no tiene endpoint de salud.
-- **Invoicing usa `/health/live` como sonda de readiness** mientras no haya
-  Kafka en Azure: su chequeo de Kafka espera 60 s sin broker. Volver a
-  `/health/ready` al desplegar Kafka.
+- **La sonda de readiness de Invoicing espera 10 s**: `/health/ready` consulta
+  MongoDB, S3 y Kafka, y el de Kafka puede tardar hasta 5 s si el broker no
+  responde.
 - Si cambias los providers de una capa, ejecuta `terraform init -upgrade` en ella.
