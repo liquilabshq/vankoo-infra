@@ -79,6 +79,19 @@ almacenamiento `vankootf…` del mismo grupo, que ningún script borra.
 
 ## Añadir un servicio
 
+### Investment (Sprint 4)
+
+Investment y Oracle en VM usan la capa aislada `investment/`, estado
+`investment.tfstate`, reutilizando `core` y `base`. No aplicar las capas generales
+para desplegar únicamente Investment. Procedimiento, acceso TLS, apagado y capturas:
+[`docs/guides/investment-azure-deployment.md`](../docs/guides/investment-azure-deployment.md).
+Operación específica: `bash scripts/azure/investment.sh help`.
+
+La VM tiene protección contra destrucción y conserva los datos en su disco. No está
+incluida en el destroy general: coordinar antes de eliminar ACR/Environment compartidos.
+
+### Otros servicios
+
 1. Su base de datos en `data/main.tf` y sus datos de conexión en `data/outputs.tf`.
 2. Su Container App en `apps/main.tf`, copiando la de IAM (Java) o la de
    Invoicing (.NET), con ingress interno.
