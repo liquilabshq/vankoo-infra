@@ -1,6 +1,8 @@
 # Capa data: una base de datos por servicio, como en el diagrama de
-# contenedores. Fase 1: IAM y Profile (PostgreSQL) e Invoicing (MongoDB). Se
-# destruye al apagar; los datos de demo se vuelven a sembrar al encender.
+# contenedores: PostgreSQL de IAM, Profile y Finance, MongoDB de Invoicing y el
+# disco de Axon Server (event store de Finance). El Oracle de Investment vive en
+# su Container App (capa apps). Se destruye al apagar; los datos de demo se
+# vuelven a sembrar al encender.
 
 data "azurerm_resource_group" "vankoo" {
   name = var.resource_group_name
@@ -152,4 +154,85 @@ locals {
     ),
     "<password>", random_password.invoicing_db.result
   )
+}
+
+# --- Finance Database (PostgreSQL) -------------------------------------------
+# Las proyecciones de Finance (depósitos, inbox de webhooks) y las tablas de
+# infraestructura de Axon que crea Flyway. Mismo tamaño y reglas que IAM y Profile;
+# Finance se conecta por TLS (sslmode=require en su perfil azure).
+
+resource "random_password" "finance_db" {
+  length      = 32
+  special     = false
+  min_upper   = 2
+  min_lower   = 2
+  min_numeric = 2
+}
+
+resource "azurerm_postgresql_flexible_server" "finance" {
+  name                          = "vankoo-finance-db-${local.suffix}"
+  resource_group_name           = data.azurerm_resource_group.vankoo.name
+  location                      = var.location
+  version                       = "16"
+  sku_name                      = "B_Standard_B1ms"
+  storage_mb                    = 32768
+  backup_retention_days         = 7
+  administrator_login           = local.admin_username
+  administrator_password        = random_password.finance_db.result
+  public_network_access_enabled = true
+
+  lifecycle {
+    ignore_changes = [zone]
+  }
+}
+
+resource "azurerm_postgresql_flexible_server_firewall_rule" "finance_allow_azure" {
+  name             = "AllowAzureServices"
+  server_id        = azurerm_postgresql_flexible_server.finance.id
+  start_ip_address = "0.0.0.0"
+  end_ip_address   = "0.0.0.0"
+}
+
+resource "azurerm_postgresql_flexible_server_database" "finance" {
+  name      = "vankoo_finance_db"
+  server_id = azurerm_postgresql_flexible_server.finance.id
+  charset   = "UTF8"
+  collation = "en_US.utf8"
+}
+
+# --- Axon Server (event store de Finance) -----------------------------------
+# Finance guarda sus eventos de dominio en Axon Server, no en PostgreSQL: si se
+# pierden, las proyecciones quedan huérfanas. Por eso Axon guarda sus datos en un
+# file share de Azure Files, que sobrevive a los reinicios y a azure-stop.sh, y que
+# el environment monta en su Container App (capa apps).
+#
+# Por comprobar al desplegar: Axon Server usa archivos mapeados en memoria y una
+# base H2 para su control, y no está documentado si funcionan sobre SMB. Si fallan,
+# las alternativas son una VM con disco propio o el event store JPA de Axon en el
+# PostgreSQL de Finance.
+
+resource "azurerm_storage_account" "axon" {
+  name                            = "vankooaxon${local.suffix}"
+  resource_group_name             = data.azurerm_resource_group.vankoo.name
+  location                        = var.location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  min_tls_version                 = "TLS1_2"
+  allow_nested_items_to_be_public = false
+}
+
+resource "azurerm_storage_share" "axon" {
+  name               = "axonserver"
+  storage_account_id = azurerm_storage_account.axon.id
+  quota              = 5
+}
+
+# El environment monta el share con este nombre; la Container App lo referencia.
+resource "azurerm_container_app_environment_storage" "axon" {
+  name                         = "axonserver"
+  container_app_environment_id = data.terraform_remote_state.core.outputs.environment_id
+  account_name                 = azurerm_storage_account.axon.name
+  share_name                   = azurerm_storage_share.axon.name
+  access_key                   = azurerm_storage_account.axon.primary_access_key
+  access_mode                  = "ReadWrite"
 }

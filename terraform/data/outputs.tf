@@ -36,3 +36,24 @@ output "invoicing_db_connection_string" {
   value     = local.invoicing_db_connection_string
   sensitive = true
 }
+
+output "finance_db_host" {
+  value = azurerm_postgresql_flexible_server.finance.fqdn
+}
+
+output "finance_db_name" {
+  value = azurerm_postgresql_flexible_server_database.finance.name
+}
+
+output "finance_db_username" {
+  value = local.admin_username
+}
+
+output "finance_db_password" {
+  value     = random_password.finance_db.result
+  sensitive = true
+}
+
+output "axon_storage_name" {
+  value = azurerm_container_app_environment_storage.axon.name
+}
