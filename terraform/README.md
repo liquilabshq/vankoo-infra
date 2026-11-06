@@ -15,13 +15,14 @@ después.
 
 ```bash
 scripts/azure/azure-deploy.sh --env-file .env   # crear, actualizar o reanudar
-scripts/azure/azure-stop.sh                     # pausa corta: detiene y conserva los datos
+scripts/azure/azure-stop.sh                     # pausa corta: detiene y conserva los datos (borra el Event Hubs)
 scripts/azure/azure-destroy.sh                  # pausa larga: borra todo, coste 0
 ```
 
 | | `azure-stop.sh` | `azure-destroy.sh` |
 |---|---|---|
 | Datos (usuarios, facturas…) | Se conservan | Se pierden |
+| Event Hubs | Se destruye: se pierden los eventos sin leer | Se destruye |
 | URL del gateway | La misma | La misma |
 | Volver a encender | Un par de minutos | Unos 20 minutos |
 | Coste mientras tanto | El registro (~$5/mes) y el disco de cada PostgreSQL | Nada |
@@ -63,7 +64,7 @@ nadie tiene que copiarlos.
 | Script | Cuándo se usa |
 |---|---|
 | `azure-deploy.sh` | A mano: crear, actualizar o reanudar |
-| `azure-stop.sh` | A mano: detener sin borrar |
+| `azure-stop.sh` | A mano: detener sin borrar datos. Solo destruye la capa `messaging` |
 | `azure-destroy.sh` | A mano: borrar todo menos la capa `core`. Con `--all` también la borra (y la URL del gateway cambia) |
 | `build-push.sh` | Lo llama `azure-deploy.sh`. A mano solo para construir y subir imágenes sin aplicar nada |
 | `bootstrap-state.sh` | Lo llama `azure-deploy.sh`. Crea la cuenta del estado la primera vez; si ya existe, no hace nada |
@@ -77,6 +78,7 @@ nadie tiene que copiarlos.
 | `functions` | La función serverless de verificación de DNI (Azure Functions con plan Flex Consumption, Application Insights) | Se conserva (se destruye con `--all`): parada no cuesta, y así mantiene su URL, su clave y el código publicado |
 | `base` | Registro de imágenes | Se destruye |
 | `data` | Una base de datos por servicio: PostgreSQL de IAM y de Profile, MongoDB de Invoicing | Se destruye |
+| `messaging` | El broker de eventos: un namespace de Azure Event Hubs, un event hub por topic y una regla de acceso por servicio | Se destruye (también con `azure-stop.sh`) |
 | `apps` | Una Container App por servicio | Se destruye |
 
 El código de la función no lo despliega Terraform sino el workflow `deploy.yml` de
@@ -86,6 +88,43 @@ Solo el gateway acepta tráfico de internet. Los servicios tienen ingress intern
 y el gateway los alcanza por el DNS del environment (`http://vankoo-iam-service`):
 en Azure no hay Eureka. El estado de Terraform vive en la cuenta de
 almacenamiento `vankootf…` del mismo grupo, que ningún script borra.
+
+## Mensajería: Azure Event Hubs
+
+En local los servicios se envían eventos por el Kafka del compose. En Azure ese
+papel lo hace la capa `messaging`, un namespace de **Azure Event Hubs** que habla
+el protocolo de Kafka: los servicios usan el mismo cliente y solo cambian la
+dirección y la autenticación.
+
+| Kafka (compose) | Event Hubs (Azure) |
+|---|---|
+| Broker `kafka-broker:9094` | Namespace `vankoo-events-<sufijo>.servicebus.windows.net:9093` |
+| Topic | Event hub, con el mismo nombre |
+| Sin autenticación (PLAINTEXT) | TLS + SASL PLAIN: usuario `$ConnectionString`, contraseña la cadena de conexión |
+| Los topics se crean al publicar | Los crea Terraform: los clientes no pueden (`auto-create-topics: false`) |
+
+- **Nivel Standard, 1 unidad de rendimiento.** Es el más barato con endpoint de
+  Kafka (el Basic no lo tiene) y admite hasta 10 event hubs; Vankoo usa 8, en
+  `locals.topics` de `messaging/main.tf`. Un topic nuevo se añade ahí.
+- **Una regla de acceso por servicio** (`locals.clients`), con permiso para enviar
+  y escuchar, no para administrar. Su cadena de conexión llega a cada Container
+  App como el secreto `kafka-connection-string`.
+- **Coste.** Cobra por hora aunque no haya tráfico (unidad de rendimiento más
+  endpoint de Kafka, unos 0.12 USD/h en Central US) y no se puede pausar. Por eso
+  `azure-stop.sh` destruye la capa y `azure-deploy.sh` la vuelve a crear con el
+  mismo nombre, antes de la capa `apps`.
+- **Al recrearlo cambian las claves** (no la dirección): `azure-deploy.sh` las
+  vuelve a escribir en las Container Apps al aplicar `apps`.
+- **Retención de un día y una partición por topic.** Basta para una demo y
+  conserva el orden de los eventos de cada topic.
+- Configuración de cliente que pide Event Hubs: `request.timeout.ms` de al menos
+  60000, `metadata.max.age.ms` y `connections.max.idle.ms` por debajo de 240000
+  (Azure cierra las conexiones inactivas a los 4 minutos) y solo compresión
+  `gzip` o ninguna. Ver
+  [Kafka client configurations for Event Hubs](https://learn.microsoft.com/en-us/azure/event-hubs/apache-kafka-configurations).
+
+Servicios conectados: Profile. IAM, Invoicing, Finance, Investment y
+Notification se conectan en las siguientes fases.
 
 ## Añadir un servicio
 
@@ -104,6 +143,9 @@ almacenamiento `vankootf…` del mismo grupo, que ningún script borra.
    la organización y del repo (`gh api orgs/liquilabshq --jq .id` y
    `gh api repos/liquilabshq/<repo> --jq .id`); sin ellos, Azure lo rechaza con
    `AADSTS700213`.
+6. Si publica o consume eventos: sus topics en `locals.topics` y su nombre en
+   `locals.clients` de `messaging/main.tf`, y en su Container App el secreto
+   `kafka-connection-string` y las variables de Kafka (copiar las de Profile).
 
 Si el servicio guarda datos solo dentro de su contenedor (Kafka, Axon u Oracle
 sin disco persistente), añade a su Container App
@@ -117,18 +159,12 @@ datos se perderán antes de detener nada.
   `azurerm` no tiene ese campo.
 - **Central US a veces no tiene capacidad** para environments nuevos
   (`ManagedEnvironmentCapacityHeavyUsageError`). Reintentar suele bastar.
-- **Profile corre con `KAFKA_ENABLED=false`** mientras no haya broker en Azure:
-  sin Kafka no arrancaría. Mientras tanto no consume `vankoo.iam.events`, así
-  que no crea el perfil (empresa o inversor) de los usuarios que se registran en
-  Azure. Para conectarlo a Azure Event Hubs no hay que tocar su código, solo su
-  Container App en `apps/main.tf`:
-  - Namespace de nivel **Standard** (el Basic no tiene endpoint Kafka) y un Event
-    Hub por topic: `vankoo.iam.events`, `risk.green-certifications.v1`,
-    `risk.company-verifications.v1` y `vankoo.profile.events`.
-  - `KAFKA_ENABLED=true`, `KAFKA_BROKERS=<namespace>.servicebus.windows.net:9093`,
-    `KAFKA_SSL=true`, `KAFKA_SASL_MECHANISM=plain`,
-    `KAFKA_SASL_USERNAME=$ConnectionString` y `KAFKA_SASL_PASSWORD` como secreto con
-    la cadena de conexión del namespace.
+- **Un topic que no está en `messaging/main.tf` no existe en Azure.** Event Hubs
+  no crea topics desde los clientes: un consumidor de un topic que falta no
+  recibe nada y un productor falla. Añádelo a `locals.topics` y vuelve a desplegar.
+- **Tras un `azure-stop.sh`, no apliques `apps` a mano sin antes `messaging`:**
+  sin el namespace, las apps recibirían una dirección y una clave vacías.
+  `azure-deploy.sh` ya lo hace en orden.
 - **Profile usa `GET /api/v1` como sonda**: aún no tiene endpoint de salud.
 - **Invoicing usa `/health/live` como sonda de readiness** mientras no haya
   Kafka en Azure: su chequeo de Kafka espera 60 s sin broker. Volver a

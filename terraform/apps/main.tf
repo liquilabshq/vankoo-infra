@@ -37,10 +37,34 @@ data "terraform_remote_state" "data" {
   }
 }
 
+# azure-stop.sh destruye la capa messaging, y su estado queda sin salidas. Los
+# valores por defecto dejan que azure-destroy.sh destruya esta capa igualmente;
+# azure-deploy.sh siempre vuelve a crear messaging antes de aplicar apps.
+data "terraform_remote_state" "messaging" {
+  backend = "azurerm"
+  config = {
+    resource_group_name  = var.resource_group_name
+    storage_account_name = var.tfstate_storage_account
+    container_name       = "tfstate"
+    key                  = "messaging.tfstate"
+  }
+  defaults = {
+    kafka_bootstrap_server   = ""
+    kafka_connection_strings = {}
+  }
+}
+
 locals {
   core = data.terraform_remote_state.core.outputs
   base = data.terraform_remote_state.base.outputs
   db   = data.terraform_remote_state.data.outputs
+  msg  = data.terraform_remote_state.messaging.outputs
+
+  # Event Hubs se usa con el cliente de Kafka de siempre: TLS, mecanismo PLAIN,
+  # el usuario literal $ConnectionString y, como contraseña, la cadena de
+  # conexión de la regla del servicio (un secreto de cada Container App).
+  kafka_bootstrap_server = local.msg.kafka_bootstrap_server
+  kafka_sasl_username    = "$ConnectionString"
 
   domain = local.core.environment_default_domain
 
@@ -366,6 +390,11 @@ resource "azurerm_container_app" "profile" {
     value = var.profile_aws_secret_access_key
   }
 
+  secret {
+    name  = "kafka-connection-string"
+    value = lookup(local.msg.kafka_connection_strings, "profile", "")
+  }
+
   # Container Apps no admite secretos vacíos: solo se crea si hay clave.
   dynamic "secret" {
     for_each = var.dni_verification_key != "" ? [1] : []
@@ -424,13 +453,30 @@ resource "azurerm_container_app" "profile" {
         name  = "PROFILE_DB_SSL"
         value = "true"
       }
-      # PARCHE TEMPORAL (fase 1, sin Kafka en Azure): Profile no arranca sin broker,
-      # así que se apaga. Mientras tanto no consume vankoo.iam.events y no crea el
-      # perfil de los usuarios nuevos. Para Event Hubs, ver «Trampas conocidas» en
-      # terraform/README.md.
+      # Kafka contra Azure Event Hubs (capa messaging).
       env {
         name  = "KAFKA_ENABLED"
-        value = "false"
+        value = "true"
+      }
+      env {
+        name  = "KAFKA_BROKERS"
+        value = local.kafka_bootstrap_server
+      }
+      env {
+        name  = "KAFKA_SSL"
+        value = "true"
+      }
+      env {
+        name  = "KAFKA_SASL_MECHANISM"
+        value = "plain"
+      }
+      env {
+        name  = "KAFKA_SASL_USERNAME"
+        value = local.kafka_sasl_username
+      }
+      env {
+        name        = "KAFKA_SASL_PASSWORD"
+        secret_name = "kafka-connection-string"
       }
       # Sin discovery server en Azure: el gateway llega por el DNS del environment.
       env {

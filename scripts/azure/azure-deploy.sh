@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Enciende, actualiza o reanuda Vankoo en Azure: crea el estado si falta,
-# aplica las capas core, base y data, construye y sube las imágenes y aplica la
-# capa apps. Si algo estaba detenido con azure-stop.sh, lo vuelve a arrancar.
+# aplica las capas core, base, data y messaging, construye y sube las imágenes
+# y aplica la capa apps. Si algo estaba detenido con azure-stop.sh, lo vuelve a
+# arrancar (y vuelve a crear el Event Hubs que azure-stop.sh borró).
 #
 # Uso: scripts/azure/azure-deploy.sh [--yes] [--skip-build] [--env-file <ruta>]
 #   --yes              no pide confirmación en cada terraform apply
@@ -41,7 +42,8 @@ done
 
 setup_terraform_env
 check_providers Microsoft.App Microsoft.ContainerRegistry Microsoft.OperationalInsights \
-  Microsoft.DBforPostgreSQL Microsoft.DocumentDB Microsoft.CognitiveServices Microsoft.Storage
+  Microsoft.DBforPostgreSQL Microsoft.DocumentDB Microsoft.CognitiveServices Microsoft.Storage \
+  Microsoft.EventHub
 
 "$SCRIPT_DIR/bootstrap-state.sh"
 
@@ -52,6 +54,8 @@ tf_apply base ${YES[@]+"${YES[@]}"}
 log "Reanudando lo que estuviera detenido"
 start_postgres_servers
 tf_apply data ${YES[@]+"${YES[@]}"}
+# El broker de eventos va antes que las apps: les da su dirección y sus claves.
+tf_apply messaging ${YES[@]+"${YES[@]}"}
 
 if [[ "$SKIP_BUILD" == true ]]; then
   [[ -f "$TF_DIR/apps/images.auto.tfvars" ]] || die "No hay images.auto.tfvars: ejecuta sin --skip-build."
