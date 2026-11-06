@@ -1,0 +1,3 @@
+# Keep only the new Investment scripts stable across Windows and Linux checkouts.
+scripts/azure/investment.sh text eol=lf
+terraform/investment/*.tftpl text eol=lf
