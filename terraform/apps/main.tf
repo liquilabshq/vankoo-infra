@@ -694,6 +694,12 @@ resource "azurerm_container_app" "gateway" {
         name  = "PROFILE_SERVICE_URI"
         value = "http://${azurerm_container_app.profile.name}"
       }
+      # Investment se desplegó a mano, fuera de Terraform: el gateway solo apunta a
+      # su Container App por el nombre, sin gestionarla.
+      env {
+        name  = "INVESTMENT_SERVICE_URI"
+        value = "http://vankoo-investment-service"
+      }
 
       startup_probe {
         transport               = "HTTP"
