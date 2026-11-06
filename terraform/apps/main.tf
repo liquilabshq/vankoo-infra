@@ -1,7 +1,8 @@
 # Capa apps: una Container App por servicio. Solo el gateway acepta tráfico de
 # internet; el resto tiene ingress interno y el gateway los alcanza por el DNS
 # del environment (http://<nombre-de-la-app>). Gateway, IAM, Invoicing y Profile
-# aquí; Finance (con Axon Server) y Notification en sus propios archivos.
+# aquí; Finance (con Axon Server), Investment (con su Oracle) y Notification en
+# sus propios archivos.
 
 data "azurerm_resource_group" "vankoo" {
   name = var.resource_group_name
@@ -73,10 +74,15 @@ locals {
   invoicing_app = "vankoo-invoicing-service"
   profile_app   = "vankoo-profile-service"
 
-  # Fase 3: en finance.tf y notification.tf.
-  finance_app      = "vankoo-finance-service"
-  axon_app         = "vankoo-axon-server"
-  notification_app = "vankoo-notification-service"
+  # Fase 3: en finance.tf, investment.tf y notification.tf.
+  finance_app       = "vankoo-finance-service"
+  axon_app          = "vankoo-axon-server"
+  investment_app    = "vankoo-investment-service"
+  investment_db_app = "vankoo-investment-db"
+  notification_app  = "vankoo-notification-service"
+
+  # Usuario que la imagen de Oracle crea en FREEPDB1 para Investment.
+  investment_db_user = "VANKOO_INVESTMENT"
 
   # Finance solo cobra con Stripe si llegan sus claves.
   stripe_enabled = var.stripe_secret_key != ""
@@ -696,6 +702,10 @@ resource "azurerm_container_app" "gateway" {
       env {
         name  = "FINANCE_SERVICE_URI"
         value = "http://${azurerm_container_app.finance.name}"
+      }
+      env {
+        name  = "INVESTMENT_SERVICE_URI"
+        value = "http://${azurerm_container_app.investment.name}"
       }
       env {
         name  = "NOTIFICATION_SERVICE_URI"
