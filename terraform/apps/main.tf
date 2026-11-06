@@ -73,6 +73,11 @@ locals {
   invoicing_app = "vankoo-invoicing-service"
   profile_app   = "vankoo-profile-service"
 
+  # En el grupo también hay apps que no gestiona Terraform (el Investment que se
+  # desplegó a mano). azure-stop.sh y azure-deploy.sh solo detienen y arrancan las
+  # que llevan esta etiqueta.
+  managed_tags = { "vankoo-managed-by" = "terraform" }
+
   # La verificación automática del DNI se enciende al pasar la URL de la función.
   dni_verification_enabled = var.dni_verification_url != ""
 }
@@ -92,6 +97,7 @@ resource "azurerm_container_app" "iam" {
   container_app_environment_id = local.core.environment_id
   revision_mode                = "Single"
   workload_profile_name        = "Consumption"
+  tags                         = local.managed_tags
 
   registry {
     server               = local.base.acr_login_server
@@ -241,6 +247,7 @@ resource "azurerm_container_app" "invoicing" {
   container_app_environment_id = local.core.environment_id
   revision_mode                = "Single"
   workload_profile_name        = "Consumption"
+  tags                         = local.managed_tags
 
   registry {
     server               = local.base.acr_login_server
@@ -425,6 +432,7 @@ resource "azurerm_container_app" "profile" {
   container_app_environment_id = local.core.environment_id
   revision_mode                = "Single"
   workload_profile_name        = "Consumption"
+  tags                         = local.managed_tags
 
   registry {
     server               = local.base.acr_login_server
@@ -622,6 +630,7 @@ resource "azurerm_container_app" "gateway" {
   container_app_environment_id = local.core.environment_id
   revision_mode                = "Single"
   workload_profile_name        = "Consumption"
+  tags                         = local.managed_tags
 
   registry {
     server               = local.base.acr_login_server
@@ -684,6 +693,12 @@ resource "azurerm_container_app" "gateway" {
       env {
         name  = "PROFILE_SERVICE_URI"
         value = "http://${azurerm_container_app.profile.name}"
+      }
+      # Investment se desplegó a mano, fuera de Terraform: el gateway solo apunta a
+      # su Container App por el nombre, sin gestionarla.
+      env {
+        name  = "INVESTMENT_SERVICE_URI"
+        value = "http://vankoo-investment-service"
       }
 
       startup_probe {

@@ -172,6 +172,11 @@ datos se perderán antes de detener nada.
 - **Tras un `azure-stop.sh`, no apliques `apps` a mano sin antes `messaging`:**
   sin el namespace, las apps recibirían una dirección y una clave vacías.
   `azure-deploy.sh` ya lo hace en orden.
+- **No todo lo que hay en el grupo es de Terraform.** Investment
+  (`vankoo-investment-service` y su VM de Oracle) se desplegó a mano. Terraform no
+  lo gestiona: el gateway solo apunta a su app por el nombre
+  (`INVESTMENT_SERVICE_URI`), y `azure-stop.sh` y `azure-deploy.sh` solo detienen y
+  arrancan las apps con la etiqueta `vankoo-managed-by = terraform`.
 - **Profile usa `GET /api/v1` como sonda**: aún no tiene endpoint de salud.
 - **La sonda de readiness de Invoicing espera 10 s**: `/health/ready` consulta
   MongoDB, S3 y Kafka, y el de Kafka puede tardar hasta 5 s si el broker no

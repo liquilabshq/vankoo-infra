@@ -90,8 +90,11 @@ check_providers() {
 # la API de Azure directamente.
 CONTAINERAPPS_API="2024-03-01"
 
+# Solo las apps que gestiona Terraform (etiqueta vankoo-managed-by = terraform).
+# En el grupo hay otras, como el Investment que se desplegó a mano, que estos
+# scripts no deben detener ni arrancar.
 vankoo_container_apps() {
-  az containerapp list --only-show-errors -g "$VANKOO_RG" --query "[?starts_with(name,'vankoo-')].name" -o tsv 2>/dev/null
+  az containerapp list --only-show-errors -g "$VANKOO_RG" --query "[?tags.\"vankoo-managed-by\"=='terraform'].name" -o tsv 2>/dev/null
 }
 
 vankoo_postgres_servers() {
