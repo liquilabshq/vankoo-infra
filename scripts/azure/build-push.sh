@@ -16,6 +16,9 @@ SERVICES=(
   "iam-service|vankoo-iam-service|Dockerfile"
   "invoicing-service|vankoo-invoicing-service|LiquiLabs.Vankoo.Invoicing/Dockerfile"
   "profile-service|vankoo-profile-service|Dockerfile"
+  "finance-service|vankoo-finance-service|Dockerfile"
+  "investment-service|vankoo-investment-service|Dockerfile"
+  "notification-service|vankoo-notification-service|Dockerfile"
 )
 
 tf_init base

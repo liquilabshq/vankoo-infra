@@ -7,7 +7,8 @@
 # Uso: scripts/azure/azure-deploy.sh [--yes] [--skip-build] [--env-file <ruta>]
 #   --yes              no pide confirmación en cada terraform apply
 #   --skip-build       reutiliza las imágenes de images.auto.tfvars
-#   --env-file <ruta>  toma las credenciales de S3 (AWS_* y PROFILE_AWS_*) de ese .env
+#   --env-file <ruta>  toma las credenciales de S3 (AWS_* y PROFILE_AWS_*) de ese .env,
+#                      y las de Stripe (STRIPE_SECRET_KEY y STRIPE_WEBHOOK_SECRET) si las tiene
 #
 # Necesita las credenciales de los dos buckets de S3, el de Invoicing (AWS_*) y el
 # de Profile (PROFILE_AWS_*), o con --env-file o en el entorno:
@@ -30,7 +31,11 @@ while (( $# > 0 )); do
   shift
 done
 
-[[ -z "$ENV_FILE" ]] || load_aws_from_env_file "$ENV_FILE"
+if [[ -n "$ENV_FILE" ]]; then
+  load_aws_from_env_file "$ENV_FILE"
+  load_stripe_from_env_file "$ENV_FILE"
+fi
+[[ -n "${TF_VAR_stripe_secret_key:-}" ]] || warn "Sin STRIPE_SECRET_KEY: Finance no podrá crear depósitos."
 
 require_tools az terraform docker git
 

@@ -181,6 +181,17 @@ load_aws_from_env_file() {
   done
 }
 
+# Opcionales: las claves de Stripe de Finance. Si faltan, Finance arranca sin poder
+# crear depósitos; no es motivo para detener el despliegue.
+load_stripe_from_env_file() {
+  local file="$1" key tfvar value
+  for pair in STRIPE_SECRET_KEY:stripe_secret_key STRIPE_WEBHOOK_SECRET:stripe_webhook_secret; do
+    key="${pair%%:*}"; tfvar="TF_VAR_${pair#*:}"
+    value="$(grep -E "^${key}=" "$file" | tail -1 | cut -d= -f2- | tr -d '\r' | sed -E 's/^["'\'']//; s/["'\'']$//')"
+    [[ -z "$value" || "$value" == YOUR_* ]] || export "$tfvar=$value"
+  done
+}
+
 tf_init() {
   local layer="$1"
   terraform -chdir="$TF_DIR/$layer" init -input=false -reconfigure \
