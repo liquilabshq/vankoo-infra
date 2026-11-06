@@ -29,3 +29,6 @@ Thumbs.db
 crash.log
 # Lo genera scripts/azure/build-push.sh en cada build.
 terraform/apps/images.auto.tfvars
+terraform/investment/*.auto.tfvars
+terraform/investment/*.auto.tfvars.json
+*.tfplan
