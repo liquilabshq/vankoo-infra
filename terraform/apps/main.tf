@@ -1,7 +1,7 @@
 # Capa apps: una Container App por servicio. Solo el gateway acepta tráfico de
 # internet; el resto tiene ingress interno y el gateway los alcanza por el DNS
-# del environment (http://<nombre-de-la-app>). Fase 1: gateway, IAM, Invoicing y
-# Profile.
+# del environment (http://<nombre-de-la-app>). Gateway, IAM, Invoicing y Profile
+# aquí; Finance (con Axon Server) y Notification en sus propios archivos.
 
 data "azurerm_resource_group" "vankoo" {
   name = var.resource_group_name
@@ -72,6 +72,14 @@ locals {
   iam_app       = "vankoo-iam-service"
   invoicing_app = "vankoo-invoicing-service"
   profile_app   = "vankoo-profile-service"
+
+  # Fase 3: en finance.tf y notification.tf.
+  finance_app      = "vankoo-finance-service"
+  axon_app         = "vankoo-axon-server"
+  notification_app = "vankoo-notification-service"
+
+  # Finance solo cobra con Stripe si llegan sus claves.
+  stripe_enabled = var.stripe_secret_key != ""
 
   # La verificación automática del DNI se enciende al pasar la URL de la función.
   dni_verification_enabled = var.dni_verification_url != ""
@@ -684,6 +692,14 @@ resource "azurerm_container_app" "gateway" {
       env {
         name  = "PROFILE_SERVICE_URI"
         value = "http://${azurerm_container_app.profile.name}"
+      }
+      env {
+        name  = "FINANCE_SERVICE_URI"
+        value = "http://${azurerm_container_app.finance.name}"
+      }
+      env {
+        name  = "NOTIFICATION_SERVICE_URI"
+        value = "http://${azurerm_container_app.notification.name}"
       }
 
       startup_probe {

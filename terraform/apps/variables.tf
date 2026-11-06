@@ -83,3 +83,17 @@ variable "dni_verification_key" {
   sensitive   = true
   default     = ""
 }
+
+variable "stripe_secret_key" {
+  description = "Clave secreta de Stripe (modo test) para los depósitos de Finance. Vacía: Finance arranca sin poder crear depósitos."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "stripe_webhook_secret" {
+  description = "Secreto de firma del webhook de Stripe para Finance. Solo se usa si hay stripe_secret_key."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
