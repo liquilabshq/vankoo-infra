@@ -27,7 +27,9 @@ locals {
 
   # Un event hub por topic de Kafka, con el mismo nombre que en el compose.
   # Event Hubs no deja crear topics desde los clientes, así que tienen que
-  # existir antes de que arranquen los servicios. El nivel Standard admite 10.
+  # existir antes de que arranquen los servicios. El nivel Standard admite 10
+  # y Vankoo los usa todos: un topic más obliga a subir de nivel o a juntar
+  # topics.
   topics = toset([
     "vankoo.iam.events",
     "vankoo.profile.events",
@@ -36,6 +38,9 @@ locals {
     "investment.auction-lifecycle.v1",
     "risk.company-verifications.v1",
     "risk.green-certifications.v1",
+    # Colas de mensajes que un consumidor no pudo procesar (dead letter queues).
+    "invoicing.auction-lifecycle.dlq",
+    "investment.auction-lifecycle.v1.dlq",
     "notification.delivery.dlq",
   ])
 
