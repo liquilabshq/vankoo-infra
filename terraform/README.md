@@ -52,6 +52,8 @@ son distintos y pueden ser de cuentas de AWS distintas:
 - **Invoicing:** `AWS_REGION`, `AWS_S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`.
 - **Profile:** `PROFILE_AWS_REGION`, `PROFILE_AWS_S3_BUCKET`, `PROFILE_AWS_ACCESS_KEY_ID`,
   `PROFILE_AWS_SECRET_ACCESS_KEY`.
+- **Finance (opcional):** `STRIPE_SECRET_KEY` y `STRIPE_WEBHOOK_SECRET`, claves de
+  modo test. Sin ellas Finance arranca, pero no puede crear depósitos.
 
 Cada `apply` de `apps` vuelve a escribir esos valores en las Container Apps: si
 el `.env` de quien despliega tiene otro bucket, Terraform lo cambiará (revisa el
@@ -77,9 +79,9 @@ nadie tiene que copiarlos.
 | `core` | El sufijo de los nombres únicos, el OCR (Document Intelligence F0), el workspace de logs y el Container Apps Environment | Se conserva: sin apps no cuesta nada, y conservar el environment mantiene la URL del gateway |
 | `functions` | La función serverless de verificación de DNI (Azure Functions con plan Flex Consumption, Application Insights) | Se conserva (se destruye con `--all`): parada no cuesta, y así mantiene su URL, su clave y el código publicado |
 | `base` | Registro de imágenes | Se destruye |
-| `data` | Una base de datos por servicio: PostgreSQL de IAM y de Profile, MongoDB de Invoicing | Se destruye |
+| `data` | Una base de datos por servicio: PostgreSQL de IAM, Profile y Finance, MongoDB de Invoicing y el file share de Axon Server (event store de Finance) | Se destruye |
 | `messaging` | El broker de eventos: un namespace de Azure Event Hubs, un event hub por topic y una regla de acceso por servicio | Se destruye (también con `azure-stop.sh`) |
-| `apps` | Una Container App por servicio | Se destruye |
+| `apps` | Una Container App por servicio, más Axon Server y el Oracle de Investment. Gateway, IAM, Invoicing y Profile en `main.tf`; el resto en `finance.tf`, `investment.tf` y `notification.tf` | Se destruye |
 
 El código de la función no lo despliega Terraform sino el workflow `deploy.yml` de
 `vankoo-dni-verification-function`; ver `docs/funciones-serverless.md`.
@@ -124,14 +126,35 @@ dirección y la autenticación.
   `gzip` o ninguna. Ver
   [Kafka client configurations for Event Hubs](https://learn.microsoft.com/en-us/azure/event-hubs/apache-kafka-configurations).
 
-Servicios conectados: Profile, IAM e Invoicing. Finance, Investment y
-Notification se conectan en las siguientes fases.
+Servicios conectados: todos menos Risk, que aún no se despliega en Azure (sus
+dos topics ya existen).
 
 - **IAM** (Spring Cloud Stream): `KAFKA_ENABLED`, `KAFKA_BROKERS`,
   `KAFKA_SASL_USERNAME` y `KAFKA_SASL_PASSWORD`; su perfil `azure` arma el resto.
 - **Invoicing** (Confluent .NET): `KafkaSettings__*`, con los timeouts que pide
   Event Hubs. Su health check de Kafka pide los metadatos del broker en lugar de
   publicar en un topic de prueba, porque no queda sitio para uno.
+- **Finance e Investment** (Spring Cloud Stream): `KAFKA_BROKERS`,
+  `KAFKA_SASL_USERNAME` y `KAFKA_SASL_PASSWORD`; su perfil `azure` arma el resto.
+  Finance sube sus timeouts de Kafka (60 s) y el de los handlers de Axon (90 s)
+  porque Event Hubs no admite los de 7 s del perfil `docker`.
+- **Notification** (kafkajs) y **Profile** (kafkajs): `KAFKA_BROKERS`,
+  `KAFKA_SSL=true`, `KAFKA_SASL_MECHANISM=plain`, `KAFKA_SASL_USERNAME` y
+  `KAFKA_SASL_PASSWORD`, sin cambios de código.
+
+## Servicios con estado: Axon Server y Oracle
+
+Finance e Investment dependen de dos servidores que en Azure no hay en versión
+administrada barata, así que corren como Container Apps con la misma imagen del
+compose (desde Docker Hub, con versión fija), una réplica fija e ingress TCP
+interno: Finance llega a `vankoo-axon-server:8124` e Investment a
+`vankoo-investment-db:1521`.
+
+| | Axon Server (Finance) | Oracle (Investment) |
+|---|---|---|
+| Datos | File share de Azure Files (capa `data`), montado en `/axonserver/data` | Solo en el contenedor (`vankoo-data = ephemeral`) |
+| Tras `azure-stop.sh` | Se conservan | Se pierden: Flyway crea el esquema vacío al volver |
+| Tamaño | 0.5 vCPU, 1 GiB | 1 vCPU, 2 GiB (lo mínimo para arrancar) |
 
 ## Añadir un servicio
 
@@ -172,6 +195,15 @@ datos se perderán antes de detener nada.
 - **Tras un `azure-stop.sh`, no apliques `apps` a mano sin antes `messaging`:**
   sin el namespace, las apps recibirían una dirección y una clave vacías.
   `azure-deploy.sh` ya lo hace en orden.
+- **Axon Server sobre Azure Files está sin probar.** Usa archivos mapeados en
+  memoria y una base H2 de control, y no está documentado que funcionen sobre un
+  share SMB. Si al desplegar no arranca o corrompe datos, las alternativas son una
+  VM con disco propio o el event store JPA de Axon en el PostgreSQL de Finance.
+- **Axon Server y Oracle se descargan de Docker Hub**, que limita las descargas
+  anónimas. Si una revisión no arranca con `ImagePullBackOff`, reintentar más tarde
+  o copiarlas al registro propio (`az acr import`).
+- **Oracle tarda en arrancar** (hasta unos minutos la primera vez): Investment se
+  reinicia hasta que Oracle acepta conexiones. Es normal en los primeros minutos.
 - **Profile usa `GET /api/v1` como sonda**: aún no tiene endpoint de salud.
 - **La sonda de readiness de Invoicing espera 10 s**: `/health/ready` consulta
   MongoDB, S3 y Kafka, y el de Kafka puede tardar hasta 5 s si el broker no
