@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: vankoo
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: vankoo
+    includeSelectors: false
+resources:
+  - namespace.yaml
+  - data/iam-db-postgres.yaml
+  - data/profile-db-postgres.yaml
+  - data/finance-db-postgres.yaml
+  - data/risk-db-postgres.yaml
+  - data/invoicing-db-mongo.yaml
+  - data/investment-db-oracle.yaml
+  - data/kafka-broker.yaml
+  - data/axon-server.yaml
+  - data/minio.yaml
+  - data/mailpit.yaml
+  - apps/discovery-server.yaml
+  - apps/api-gateway.yaml
+  - apps/iam-service.yaml
+  - apps/investment-service.yaml
+  - apps/finance-service.yaml
+  - apps/profile-service.yaml
+  - apps/invoicing-service.yaml
+  - apps/risk-service.yaml
+  - apps/notification-service.yaml
+  - network/ingress.yaml
+  - network/network-policy.yaml
+configMapGenerator:
+  - name: vankoo-config
+    literals:
+      - DISCOVERY_SERVER_URL=http://discovery-server:8761/eureka/
+      - PASSWORD_RESET_WEB_URL=http://localhost:5173/iam/reset
+      - WEB_APP_URL=http://localhost:5173
+      - MINIO_PUBLIC_URL=http://localhost:9100/vankoo-profile-documents
+      - STRIPE_ENABLED=false
+      - RISK_AI_ENABLED=false
+      - RISK_REGISTRY_REFRESH_ENABLED=false
