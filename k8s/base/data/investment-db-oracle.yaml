@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: investment-db-oracle
+  labels:
+    app.kubernetes.io/name: investment-db-oracle
+    app.kubernetes.io/component: data
+spec:
+  serviceName: investment-db-oracle
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: investment-db-oracle
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: investment-db-oracle
+        app.kubernetes.io/component: data
+    spec:
+      containers:
+        - name: investment-db-oracle
+          image: gvenzl/oracle-free:23-slim-faststart
+          ports:
+            - name: oracle
+              containerPort: 1521
+          env:
+            - name: ORACLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: vankoo-secrets
+                  key: INVESTMENT_DB_MASTER_PASSWORD
+            - name: APP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: vankoo-secrets
+                  key: INVESTMENT_DB_USER
+            - name: APP_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: vankoo-secrets
+                  key: INVESTMENT_DB_PASSWORD
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1536Mi
+            limits:
+              cpu: 2000m
+              memory: 2560Mi
+          readinessProbe:
+            exec:
+              command: ["healthcheck.sh"]
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 30
+          volumeMounts:
+            - name: data
+              mountPath: /opt/oracle/oradata
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: investment-db-oracle
+  labels:
+    app.kubernetes.io/name: investment-db-oracle
+spec:
+  # Permite que el propio pod se alcance por su Service antes de estar listo
+  # (Kafka en modo KRaft habla con su controlador por kafka-broker:9093).
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: investment-db-oracle
+  ports:
+    - name: oracle
+      port: 1521
+      targetPort: oracle

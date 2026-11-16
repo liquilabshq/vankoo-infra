@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  labels:
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/component: microservice
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api-gateway
+        app.kubernetes.io/component: microservice
+    spec:
+      # Cada imagen ya fija su usuario sin privilegios (USER en el Dockerfile). No se
+      # declara runAsNonRoot porque varias usan un usuario con nombre (spring, risk)
+      # y Kubernetes solo puede comprobarlo con un UID numérico.
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api-gateway
+          image: vankoo-api-gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DISCOVERY_SERVER_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: vankoo-config
+                  key: DISCOVERY_SERVER_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: vankoo-secrets
+                  key: JWT_SECRET
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: 1000m
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          startupProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  labels:
+    app.kubernetes.io/name: api-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: api-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

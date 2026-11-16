@@ -1,0 +1,35 @@
+# Overlay para un clúster local (kind). Los secretos son valores de desarrollo,
+# los mismos que usa docker-compose.yaml por defecto: nunca usar este overlay fuera
+# de una máquina local. Las claves externas (OCR, Stripe, OpenAI) van vacías.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+secretGenerator:
+  - name: vankoo-secrets
+    namespace: vankoo
+    literals:
+      - JWT_SECRET=local-only-jwt-secret-0123456789abcdef0123456789abcdef0123456789abcdef
+      - IAM_DB_USERNAME=admin
+      - IAM_DB_PASSWORD=password
+      - PROFILE_DB_USER=admin
+      - PROFILE_DB_PASSWORD=password
+      - FINANCE_DB_USERNAME=admin
+      - FINANCE_DB_PASSWORD=password
+      - RISK_DB_USERNAME=admin
+      - RISK_DB_PASSWORD=password
+      - RISK_DATABASE_URL=postgresql+asyncpg://admin:password@risk-db-postgres:5432/vankoo_risk_db
+      - INVOICING_DB_USER=admin
+      - INVOICING_DB_PASSWORD=password
+      - INVOICING_DB_CONNECTION_STRING=mongodb://admin:password@invoicing-db-mongo:27017/?authSource=admin
+      - INVESTMENT_DB_USER=VANKOO_INVESTMENT
+      - INVESTMENT_DB_PASSWORD=password
+      - INVESTMENT_DB_MASTER_PASSWORD=password
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+      - PUSH_TOPIC_SECRET=local-only-push-topic-secret
+      - AZURE_OCR_ENDPOINT=
+      - AZURE_OCR_API_KEY=
+      - STRIPE_SECRET_KEY=
+      - STRIPE_WEBHOOK_SECRET=
+      - OPENAI_API_KEY=

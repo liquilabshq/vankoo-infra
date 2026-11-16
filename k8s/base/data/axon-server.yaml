@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: axon-server
+  labels:
+    app.kubernetes.io/name: axon-server
+    app.kubernetes.io/component: data
+spec:
+  serviceName: axon-server
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: axon-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: axon-server
+        app.kubernetes.io/component: data
+    spec:
+      containers:
+        - name: axon-server
+          image: axoniq/axonserver:2026.1.7
+          ports:
+            - name: http
+              containerPort: 8024
+            - name: grpc
+              containerPort: 8124
+          env:
+            - name: AXONIQ_AXONSERVER_STANDALONE
+              value: "true"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /axonserver/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: axon-server
+  labels:
+    app.kubernetes.io/name: axon-server
+spec:
+  # Permite que el propio pod se alcance por su Service antes de estar listo
+  # (Kafka en modo KRaft habla con su controlador por kafka-broker:9093).
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: axon-server
+  ports:
+    - name: http
+      port: 8024
+      targetPort: http
+    - name: grpc
+      port: 8124
+      targetPort: grpc
