@@ -1,0 +1,13 @@
+# Configuración de Gitleaks para este repo: reglas por defecto más excepciones
+# revisadas a mano. Cada excepción dice por qué no es un secreto.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "password_secret_name nombra el secreto de la Container App (p. ej. acr-password); no es un valor"
+regexTarget = "line"
+regexes = ['''password_secret_name\s*=''']
+
+[[allowlists]]
+description = "Variables vacías de ejemplo en .env.example"
+paths = ['''(^|/)\.env\.example$''']
