@@ -1,0 +1,15 @@
+# El padrón reducido de SUNAT (unos 400 MB comprimidos, millones de filas) no
+# cabe en el 1 Gi de la base: en Azure el disco de Risk es de 10 Gi.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: risk-db-postgres
+spec:
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

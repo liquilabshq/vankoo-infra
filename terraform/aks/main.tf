@@ -87,3 +87,21 @@ resource "azurerm_role_assignment" "aks_acr_pull" {
   principal_id                     = azurerm_kubernetes_cluster.vankoo.kubelet_identity[0].object_id
   skip_service_principal_aad_check = true
 }
+
+# Tercer nodo, de otra familia: la cuota DSv3 (4 vCPU) ya la ocupan los dos del
+# pool del sistema, y la DSv4 quedó libre. Las bases, Kafka, Axon, Argo CD y el
+# monitoreo no caben con holgura en 2 nodos de 8 GB.
+resource "azurerm_kubernetes_cluster_node_pool" "extra" {
+  count                 = var.extra_node_count > 0 ? 1 : 0
+  name                  = "extra"
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.vankoo.id
+  vm_size               = var.extra_node_vm_size
+  node_count            = var.extra_node_count
+  os_disk_size_gb       = 64
+  mode                  = "User"
+
+  tags = {
+    "vankoo-managed-by" = "terraform"
+    "vankoo-layer"      = "aks"
+  }
+}
