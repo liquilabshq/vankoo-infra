@@ -33,7 +33,7 @@ aks_credentials
 
 ip="$(ingress_ip)"
 [[ -n "$ip" ]] || die "El Ingress no tiene IP: ejecuta scripts/aks/aks-up.sh"
-public_url="http://$ip"
+public_url="https://$(public_host)"
 
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 

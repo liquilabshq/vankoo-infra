@@ -9,10 +9,16 @@ metadata:
   name: finance-stripe-webhook
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /api/v1/payment-providers/stripe/webhooks
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 spec:
   ingressClassName: nginx
+  # Mismo certificado que el Ingress principal (lo emite cert-manager para «vankoo»).
+  tls:
+    - hosts: [vankoo-liquilabs.centralus.cloudapp.azure.com]
+      secretName: vankoo-tls
   rules:
-    - http:
+    - host: vankoo-liquilabs.centralus.cloudapp.azure.com
+      http:
         paths:
           - path: /finance/api/v1/payment-providers/stripe/webhooks
             pathType: Exact

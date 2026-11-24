@@ -7,6 +7,10 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../azure" && pwd)/lib.sh"
 OVERLAY_DIR="$INFRA_DIR/k8s/overlays/azure"
 NAMESPACE="vankoo"
 INGRESS_NAMESPACE="ingress-nginx"
+# Nombre DNS que Azure da a la IP del ingress-nginx: https://<etiqueta>.<región>.cloudapp.azure.com.
+# Si cambia, hay que cambiarlo también en k8s/overlays/azure (Ingress).
+AKS_DNS_LABEL="${AKS_DNS_LABEL:-vankoo-liquilabs}"
+public_host() { printf '%s.%s.cloudapp.azure.com' "$AKS_DNS_LABEL" "$VANKOO_LOCATION"; }
 # Versión fija del chart del Ingress, para que el despliegue sea reproducible.
 INGRESS_CHART_VERSION="${INGRESS_CHART_VERSION:-4.13.3}"
 

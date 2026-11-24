@@ -3,6 +3,8 @@
 # de chart fijadas:
 #   - Argo CD (k8s/argocd/values.yaml) y la aplicación «vankoo», que mantiene el
 #     namespace igual que k8s/overlays/azure en GitHub (GitOps).
+#   - cert-manager y el emisor de Let's Encrypt (k8s/cert-manager): certificado
+#     TLS del Ingress para https://<nombre DNS de Azure>.
 #   - Monitoreo: Prometheus, Alertmanager, Grafana, node-exporter y
 #     kube-state-metrics (k8s/monitoring/values.yaml), más las reglas de alerta,
 #     los SLO y el dashboard de Vankoo (k8s/monitoring/vankoo).
@@ -19,6 +21,7 @@
 #   kubectl -n monitoring get secret monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+CERT_MANAGER_CHART_VERSION="v1.21.2"
 ARGOCD_CHART_VERSION="10.18.4"
 MONITORING_CHART_VERSION="93.8.0"
 
@@ -37,6 +40,13 @@ aks_credentials
 
 helm repo add argo https://argoproj.github.io/argo-helm --force-update >/dev/null
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update >/dev/null
+helm repo add jetstack https://charts.jetstack.io --force-update >/dev/null
+
+log "cert-manager ($CERT_MANAGER_CHART_VERSION) y Let's Encrypt"
+helm upgrade --install cert-manager jetstack/cert-manager \
+  --version "$CERT_MANAGER_CHART_VERSION" --namespace cert-manager --create-namespace \
+  -f "$INFRA_DIR/k8s/cert-manager/values.yaml" --wait --timeout 10m >/dev/null
+kubectl apply -f "$INFRA_DIR/k8s/cert-manager/cluster-issuer.yaml" >/dev/null
 
 log "Monitoreo (kube-prometheus-stack $MONITORING_CHART_VERSION)"
 helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \

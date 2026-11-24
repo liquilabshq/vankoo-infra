@@ -40,6 +40,7 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
   --set controller.resources.requests.cpu=50m \
   --set controller.resources.requests.memory=96Mi \
   --set-string 'controller.service.annotations.service\.beta\.kubernetes\.io/azure-load-balancer-health-probe-request-path=/healthz' \
+  --set-string "controller.service.annotations.service\.beta\.kubernetes\.io/azure-dns-label-name=$AKS_DNS_LABEL" \
   --wait --timeout 10m >/dev/null
 
 for _ in $(seq 1 30); do
@@ -48,5 +49,5 @@ done
 [[ -n "${ip:-}" ]] || die "El Ingress no recibió IP pública"
 
 log "Clúster listo"
-echo "Ingress: http://$ip"
+echo "Ingress: $ip → https://$(public_host) (HTTPS cuando corra aks-platform.sh)"
 echo "Siguiente: scripts/aks/aks-build.sh y scripts/aks/aks-deploy.sh"
