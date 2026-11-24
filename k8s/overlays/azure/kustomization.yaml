@@ -76,3 +76,6 @@ patches:
     target:
       kind: StatefulSet
       name: mailpit
+  - path: patches/image-pull-always.yaml
+    target:
+      kind: Deployment
