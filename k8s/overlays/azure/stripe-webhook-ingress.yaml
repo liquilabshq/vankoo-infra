@@ -1,0 +1,23 @@
+# Webhook de Stripe: llega a /finance/api/v1/payment-providers/stripe/webhooks
+# (como el resto del API, bajo el prefijo del servicio) y va directo a Finance,
+# sin pasar por el gateway porque Stripe no manda JWT. Finance lo expone sin el
+# prefijo, así que este Ingress (aparte, porque la reescritura afecta a todas sus
+# rutas) lo quita.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: finance-stripe-webhook
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /api/v1/payment-providers/stripe/webhooks
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /finance/api/v1/payment-providers/stripe/webhooks
+            pathType: Exact
+            backend:
+              service:
+                name: finance-service
+                port:
+                  name: http
