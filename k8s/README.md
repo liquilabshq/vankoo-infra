@@ -60,10 +60,10 @@ Convive con el despliegue en Container Apps (`terraform/{core,base,data,messagin
 viven dentro del clúster (StatefulSets con discos de Azure), no en las bases administradas.
 
 ```bash
-scripts/aks/aks-up.sh --yes       # capa terraform/aks (3 nodos) + ingress-nginx; imprime la IP pública
+scripts/aks/aks-up.sh --yes       # capa terraform/aks (3 nodos) + ingress-nginx con nombre DNS de Azure
 scripts/aks/aks-build.sh          # imágenes linux/amd64 en el ACR (ACR Tasks), etiquetas <sha> y «aks»
 scripts/aks/aks-deploy.sh         # Secret y ConfigMaps desde el .env (sin imprimir) + overlay azure
-scripts/aks/aks-platform.sh       # Argo CD + monitoreo (versiones fijadas)
+scripts/aks/aks-platform.sh       # cert-manager (HTTPS), Argo CD y monitoreo (versiones fijadas)
 scripts/aks/aks-stop.sh           # pausa: apaga los nodos, conserva los discos
 scripts/aks/aks-destroy.sh --yes  # borra el clúster y sus datos (no toca Container Apps ni el ACR)
 ```
@@ -76,8 +76,10 @@ pods bajen la etiqueta `aks` nueva.
 
 - **Imágenes del ACR** con la etiqueta `aks`, y la **web MYPE** dentro del clúster
   (`web.yaml`, imagen de `vankoo-mype-web`).
-- **Un solo origen.** El Ingress no tiene host, así que vale la IP pública o cualquier dominio
-  que apunte a ella. `/<servicio>/api`, `/scalar` y `/v3/api-docs` van al API Gateway y el resto a
+- **Un solo origen, en HTTPS:** **https://vankoo-liquilabs.centralus.cloudapp.azure.com**. Es el
+  nombre DNS que Azure da a la IP del ingress-nginx (`AKS_DNS_LABEL` en `scripts/aks/lib.sh`).
+  cert-manager pide y renueva el certificado de Let's Encrypt (reto HTTP-01) y HTTP redirige a
+  HTTPS. `/<servicio>/api`, `/scalar` y `/v3/api-docs` van al API Gateway y el resto a
   la web. El webhook de Stripe va directo a Finance con su propio Ingress, que quita el prefijo
   `/finance`.
 - **Archivos en el S3 real**, como en Container Apps: no se despliega MinIO.
@@ -124,7 +126,7 @@ Las contraseñas están en los Secrets `argocd-initial-admin-secret` y `monitori
 
 ### Stripe en AKS
 
-El webhook de prueba llega con `stripe listen --forward-to http://<IP>/finance/api/v1/payment-providers/stripe/webhooks`.
+El webhook de prueba llega con `stripe listen --forward-to https://vankoo-liquilabs.centralus.cloudapp.azure.com/finance/api/v1/payment-providers/stripe/webhooks`.
 Su `whsec` tiene que ir en `vankoo-secrets` (`STRIPE_WEBHOOK_SECRET`), seguido de
 `kubectl -n vankoo rollout restart deploy/finance-service`. `aks-deploy.sh` lo vuelve a poner
 con el valor del `.env`.
