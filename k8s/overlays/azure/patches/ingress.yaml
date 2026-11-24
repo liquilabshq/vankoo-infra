@@ -1,0 +1,21 @@
+# Un solo origen para la web y el API, sin nombre de host (vale la IP pública o
+# cualquier dominio que apunte a ella):
+#   /<servicio>/api/... y la documentación → API Gateway
+#   webhook de Stripe                       → Finance (Stripe no manda JWT)
+#   todo lo demás                           → web MYPE
+- op: replace
+  path: /spec/rules
+  value:
+    - http:
+        paths:
+          - {path: /finance/api/v1/payment-providers/stripe/webhooks, pathType: Exact, backend: {service: {name: finance-service, port: {name: http}}}}
+          - {path: /iam/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /profile/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /invoicing/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /investment/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /finance/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /risk/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /notification/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /scalar, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /v3/api-docs, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /, pathType: Prefix, backend: {service: {name: mype-web, port: {name: http}}}}

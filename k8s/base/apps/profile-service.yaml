@@ -55,7 +55,7 @@ spec:
                 secretKeyRef:
                   name: vankoo-secrets
                   key: PROFILE_DB_USER
-            - name: PROFILE_DB_PASSWORD
+            - name: PROFILE_DB_PASS
               valueFrom:
                 secretKeyRef:
                   name: vankoo-secrets

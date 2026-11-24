@@ -1,0 +1,21 @@
+# Profile guarda los documentos del KYC y los certificados en su bucket de S3.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: profile-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: profile-service
+          env:
+            - name: STORAGE_PROVIDER
+              value: "s3"
+            - name: AWS_REGION
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: PROFILE_AWS_REGION}}
+            - name: AWS_S3_BUCKET
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: PROFILE_AWS_S3_BUCKET}}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: PROFILE_AWS_ACCESS_KEY_ID}}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: PROFILE_AWS_SECRET_ACCESS_KEY}}

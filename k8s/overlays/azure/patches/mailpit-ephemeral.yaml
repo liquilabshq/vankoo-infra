@@ -1,0 +1,11 @@
+# Cada nodo D2s_v3 admite como mucho 4 discos de datos: con 2 nodos caben 8, y las
+# bases, Kafka y Axon ya usan 8. Mailpit solo guarda los correos de prueba, así
+# que en Azure usa un volumen temporal (se vacía si el pod se reinicia).
+- op: remove
+  path: /spec/volumeClaimTemplates
+- op: add
+  path: /spec/template/spec/volumes
+  value:
+    - name: data
+      emptyDir:
+        sizeLimit: 256Mi

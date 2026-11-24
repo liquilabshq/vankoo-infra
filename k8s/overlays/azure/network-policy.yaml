@@ -1,0 +1,33 @@
+# Además del gateway (base), en Azure reciben tráfico del Ingress:
+#   - la web MYPE, que se sirve desde el mismo origen;
+#   - Finance, solo por el webhook de Stripe, que no pasa por el gateway porque
+#     Stripe no manda JWT (el Ingress solo expone esa ruta, ver patches/ingress.yaml).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-from-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mype-web
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: finance-webhook-from-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: finance-service
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx

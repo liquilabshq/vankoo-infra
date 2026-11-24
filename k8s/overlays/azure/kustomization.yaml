@@ -1,0 +1,76 @@
+# Overlay para Azure Kubernetes Service (capa terraform/aks). Lo aplica
+# scripts/aks/aks-deploy.sh o Argo CD (k8s/argocd/). Antes, el script crea en el
+# namespace dos objetos que NO están en Git:
+#   Secret vankoo-secrets    contraseñas de las bases, JWT y claves externas (OCR, Stripe, S3, OpenAI)
+#   ConfigMap vankoo-deploy  valores de este despliegue: URL pública de la web y bucket de los certificados
+#   ConfigMap kyc-demo-ca    CA de demostración del KYC (PARCHE TEMPORAL, ver patches/risk.yaml)
+#
+# Diferencias con el overlay local:
+#   - Imágenes del ACR (linux/amd64) con la etiqueta «aks», que mueve scripts/aks/aks-build.sh.
+#   - Archivos en el S3 real (como en Container Apps), sin MinIO dentro del clúster.
+#   - La web MYPE corre dentro del clúster y comparte origen con el API: el Ingress
+#     manda /<servicio>/api/... al gateway y el resto a la web.
+#   - Stripe, la IA del riesgo y la recarga del padrón encendidos.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: vankoo
+resources:
+  - ../../base
+  - web.yaml
+  - network-policy.yaml
+
+configMapGenerator:
+  - name: vankoo-config
+    behavior: merge
+    literals:
+      - STRIPE_ENABLED=true
+      - RISK_AI_ENABLED=true
+      - RISK_REGISTRY_REFRESH_ENABLED=true
+
+images:
+  - name: vankoo-api-gateway
+    newName: vankooacrqxv9yb.azurecr.io/api-gateway
+    newTag: aks
+  - name: vankoo-discovery-server
+    newName: vankooacrqxv9yb.azurecr.io/discovery-server
+    newTag: aks
+  - name: vankoo-iam-service
+    newName: vankooacrqxv9yb.azurecr.io/iam-service
+    newTag: aks
+  - name: vankoo-profile-service
+    newName: vankooacrqxv9yb.azurecr.io/profile-service
+    newTag: aks
+  - name: vankoo-invoicing-service
+    newName: vankooacrqxv9yb.azurecr.io/invoicing-service
+    newTag: aks
+  - name: vankoo-investment-service
+    newName: vankooacrqxv9yb.azurecr.io/investment-service
+    newTag: aks
+  - name: vankoo-finance-service
+    newName: vankooacrqxv9yb.azurecr.io/finance-service
+    newTag: aks
+  - name: vankoo-risk-service
+    newName: vankooacrqxv9yb.azurecr.io/risk-service
+    newTag: aks
+  - name: vankoo-notification-service
+    newName: vankooacrqxv9yb.azurecr.io/notification-service
+    newTag: aks
+  - name: vankoo-mype-web
+    newName: vankooacrqxv9yb.azurecr.io/mype-web
+    newTag: aks
+
+patches:
+  - path: patches/delete-minio.yaml
+  - path: patches/profile-s3.yaml
+  - path: patches/invoicing-s3.yaml
+  - path: patches/risk.yaml
+  - path: patches/public-urls.yaml
+  - path: patches/volume-permissions.yaml
+  - path: patches/ingress.yaml
+    target:
+      kind: Ingress
+      name: vankoo
+  - path: patches/mailpit-ephemeral.yaml
+    target:
+      kind: StatefulSet
+      name: mailpit
