@@ -18,7 +18,9 @@ spec:
         - record: vankoo:gateway_requests:rate5m
           expr: sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway"}[5m]))
         - record: vankoo:gateway_errors:rate5m
-          expr: sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", status=~"5.."}[5m]))
+          # «or vector(0)»: sin ningún 5xx la suma no tendría series y la
+          # disponibilidad saldría vacía en vez de 100 %.
+          expr: sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", status=~"5.."}[5m])) or vector(0)
         - record: vankoo:gateway_availability:ratio5m
           expr: 1 - (vankoo:gateway_errors:rate5m / clamp_min(vankoo:gateway_requests:rate5m, 1e-9))
         - record: vankoo:gateway_latency_p95:5m
