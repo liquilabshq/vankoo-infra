@@ -1,0 +1,30 @@
+# Argo CD para el clúster de AKS (chart argo/argo-cd, versión fijada en
+# scripts/aks/aks-gitops.sh). Versión ligera: sin Dex (se entra con el usuario
+# admin), sin notificaciones ni ApplicationSets, una réplica de cada pieza y
+# reservas pequeñas, porque el clúster tiene 3 nodos de 8 GB.
+dex:
+  enabled: false
+notifications:
+  enabled: false
+applicationSet:
+  enabled: false
+configs:
+  params:
+    # El servidor se publica solo por port-forward (kubectl port-forward), sin TLS propio.
+    server.insecure: true
+controller:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 768Mi}
+repoServer:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 512Mi}
+server:
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {memory: 256Mi}
+redis:
+  resources:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {memory: 128Mi}
