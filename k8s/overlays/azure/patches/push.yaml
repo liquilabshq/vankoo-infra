@@ -1,0 +1,22 @@
+# Push en Azure: Firebase Cloud Messaging si scripts/aks/aks-deploy.sh encontró la
+# cuenta de servicio en el .env (pone PUSH_PROVIDER=firebase en vankoo-deploy y las
+# FIREBASE_* en vankoo-secrets); si no, PUSH_PROVIDER=logging y los push van al log.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: notification-service
+          env:
+            - name: PUSH_PROVIDER
+              value: null
+              valueFrom: {configMapKeyRef: {name: vankoo-deploy, key: PUSH_PROVIDER}}
+            - name: FIREBASE_PROJECT_ID
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: FIREBASE_PROJECT_ID, optional: true}}
+            - name: FIREBASE_CLIENT_EMAIL
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: FIREBASE_CLIENT_EMAIL, optional: true}}
+            - name: FIREBASE_PRIVATE_KEY
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: FIREBASE_PRIVATE_KEY, optional: true}}

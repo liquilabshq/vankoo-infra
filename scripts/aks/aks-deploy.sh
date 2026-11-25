@@ -7,7 +7,8 @@
 #     externas leídas del .env de vankoo-infra (OCR, Stripe, S3, OpenAI), sin
 #     imprimirlas ni dejarlas en disco.
 #   - ConfigMap vankoo-deploy: URL pública (IP del Ingress), bucket de certificados y
-#     correo: Azure Communication Services si existe la capa email, si no Mailpit.
+#     correo: Azure Communication Services si existe la capa email, si no Mailpit;
+#     push: Firebase si el .env trae su cuenta de servicio, si no solo log.
 #   - ConfigMap kyc-demo-ca: CA de demostración del KYC (PARCHE TEMPORAL).
 #
 # Uso: scripts/aks/aks-deploy.sh [--env-file <ruta>] [--restart]
@@ -60,6 +61,20 @@ else
   acs_connection_string=""
 fi
 
+# Push: Firebase Cloud Messaging si el .env trae la cuenta de servicio
+# (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL y FIREBASE_PRIVATE_KEY); si no,
+# Notification solo escribe los push en el log.
+push_provider=logging
+if [[ -n "$(env_value "$ENV_FILE" FIREBASE_PROJECT_ID)" && -n "$(env_value "$ENV_FILE" FIREBASE_CLIENT_EMAIL)" \
+      && -n "$(env_value "$ENV_FILE" FIREBASE_PRIVATE_KEY)" ]]; then
+  push_provider="$(env_value "$ENV_FILE" NOTIFICATION_PUSH_PROVIDER)"
+  [[ -n "$push_provider" ]] || push_provider=firebase
+fi
+# El secreto de los topics de FCM: el del .env si existe (el mismo que en local),
+# si no el que ya tenía el clúster.
+push_topic_secret="$(env_value "$ENV_FILE" NOTIFICATION_PUSH_TOPIC_SECRET)"
+[[ -n "$push_topic_secret" ]] || push_topic_secret="$(keep PUSH_TOPIC_SECRET)"
+
 secrets="$(mktemp)"; chmod 600 "$secrets"
 trap 'rm -f "$secrets"' EXIT
 iam_db_password="$(keep IAM_DB_PASSWORD)"
@@ -82,7 +97,12 @@ investment_db_password="$(keep INVESTMENT_DB_PASSWORD)"
   # MinIO no se despliega en Azure (archivos en S3), pero los manifiestos base aún
   # referencian estas claves.
   printf 'MINIO_ROOT_USER=unused\nMINIO_ROOT_PASSWORD=%s\n' "$(keep MINIO_ROOT_PASSWORD)"
-  printf 'PUSH_TOPIC_SECRET=%s\n' "$(keep PUSH_TOPIC_SECRET)"
+  printf 'PUSH_TOPIC_SECRET=%s\n' "$push_topic_secret"
+  if [[ "$push_provider" == firebase ]]; then
+    for key in FIREBASE_PROJECT_ID FIREBASE_CLIENT_EMAIL FIREBASE_PRIVATE_KEY; do
+      printf '%s=%s\n' "$key" "$(env_value "$ENV_FILE" "$key")"
+    done
+  fi
   [[ -n "$acs_connection_string" ]] && printf 'ACS_CONNECTION_STRING=%s\n' "$acs_connection_string"
   for key in AZURE_OCR_ENDPOINT AZURE_OCR_API_KEY STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET OPENAI_API_KEY \
              AWS_REGION AWS_S3_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
@@ -101,6 +121,7 @@ kubectl -n "$NAMESPACE" create configmap vankoo-deploy \
   --from-literal=WEB_APP_URL="$public_url" \
   --from-literal=PASSWORD_RESET_WEB_URL="$public_url/iam/reset" \
   --from-literal=GREEN_DOCUMENTS_BASE_URL="https://$bucket.s3.$region.amazonaws.com" \
+  --from-literal=PUSH_PROVIDER="$push_provider" \
   --from-literal=EMAIL_PROVIDER="$email_provider" \
   --from-literal=MAIL_FROM="$mail_from" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null

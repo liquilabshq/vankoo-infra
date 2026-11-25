@@ -152,6 +152,16 @@ acceso (HMAC). No se usa el SMTP de ACS porque exige registrar una app de Entra,
 universidad no lo permite. Sin la capa, todo va a Mailpit como en local. El dominio administrado
 tiene límites de envío bajos: sirve para la demo, no para producción.
 
+### Push (Firebase Cloud Messaging)
+
+Si el `.env` de vankoo-infra trae la cuenta de servicio de Firebase (`FIREBASE_PROJECT_ID`,
+`FIREBASE_CLIENT_EMAIL` y `FIREBASE_PRIVATE_KEY`, con los saltos de línea de la clave escritos como
+`\n`), `aks-deploy.sh` pone `PUSH_PROVIDER=firebase` en `vankoo-deploy` y las tres claves en
+`vankoo-secrets`. Notification envía entonces los avisos por FCM a la app Android, que registra su
+dispositivo al iniciar sesión. Si no las trae, los push solo se escriben en el log. El secreto de
+los topics sale de `NOTIFICATION_PUSH_TOPIC_SECRET` si existe. iOS necesita además APNs (cuenta de
+Apple Developer).
+
 ### Stripe en AKS
 
 El webhook de prueba llega con `stripe listen --forward-to https://vankoo-liquilabs.centralus.cloudapp.azure.com/finance/api/v1/payment-providers/stripe/webhooks`.
