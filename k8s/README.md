@@ -101,8 +101,24 @@ pods bajen la etiqueta `aks` nueva.
 
 La aplicación `vankoo` mantiene el namespace igual que `k8s/overlays/azure` en GitHub, con
 sync automático, `prune` y `selfHeal`: **un commit en el overlay o en la base se despliega solo**.
-Para volver atrás: «History and rollback» en Argo CD, o revertir el commit. Argo CD no toca
-lo que no está en Git (el Secret y los ConfigMaps del despliegue).
+Argo CD no toca lo que no está en Git (el Secret y los ConfigMaps del despliegue).
+
+**Volver atrás = revertir el commit** (`git revert` y push). Con el sync automático, Argo CD
+no deja usar «History and rollback» desde su interfaz, y un `kubectl rollout undo` lo
+desharía `selfHeal`. Git es la única fuente de verdad también para la reversión.
+
+**Simulacro (24 nov 2026, hora de Lima):** se publicó una versión rota de la web (una
+imagen que no existe) y se revirtió.
+
+| Hora | Commit | Argo CD | Web pública |
+|---|---|---|---|
+| 20:31:05 | `00c83dc`: imagen `mype-web:rollback-drill` | Synced / Progressing: el pod nuevo queda en `ErrImagePull` → `ImagePullBackOff` | 200: sigue el pod anterior |
+| 20:31:42 | `405c2a2`: `git revert` | OutOfSync → Synced / Healthy en 12 s; el pod roto se elimina | 200 |
+
+La web no dejó de responder: el rolling update (`maxSurge: 1`, `maxUnavailable: 0`) no
+retira el pod viejo hasta que el nuevo esté listo. El historial de Argo CD guarda las dos
+revisiones (6 y 7). Para repetirlo: cambiar un `newTag` de `overlays/azure/kustomization.yaml`,
+hacer push, mirar el estado y revertir.
 
 ### Monitoreo (`monitoring/`)
 
