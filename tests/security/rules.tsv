@@ -1,0 +1,2 @@
+# Reglas del escaneo base de ZAP: id<TAB>acción (IGNORE, INFO, WARN, FAIL)<TAB>justificación.
+# Empieza vacío: todo hallazgo se reporta. Si el equipo acepta un riesgo, se anota aquí con su motivo.

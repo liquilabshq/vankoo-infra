@@ -1,0 +1,21 @@
+# Invoicing guarda los PDF de las facturas en su bucket de S3.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: invoicing-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: invoicing-service
+          env:
+            - name: StorageProviderSettings__Provider
+              value: "AwsS3"
+            - name: AwsS3Settings__Region
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: AWS_REGION}}
+            - name: AwsS3Settings__BucketName
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: AWS_S3_BUCKET}}
+            - name: AwsS3Settings__AccessKey
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: AWS_ACCESS_KEY_ID}}
+            - name: AwsS3Settings__SecretKey
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: AWS_SECRET_ACCESS_KEY}}

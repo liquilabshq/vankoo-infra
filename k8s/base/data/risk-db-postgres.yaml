@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: risk-db-postgres
+  labels:
+    app.kubernetes.io/name: risk-db-postgres
+    app.kubernetes.io/component: data
+spec:
+  serviceName: risk-db-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: risk-db-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: risk-db-postgres
+        app.kubernetes.io/component: data
+    spec:
+      containers:
+        - name: risk-db-postgres
+          image: postgres:15
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: "vankoo_risk_db"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: vankoo-secrets
+                  key: RISK_DB_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: vankoo-secrets
+                  key: RISK_DB_PASSWORD
+            - name: PGDATA
+              value: "/var/lib/postgresql/data/pgdata"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 30
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: risk-db-postgres
+  labels:
+    app.kubernetes.io/name: risk-db-postgres
+spec:
+  # Permite que el propio pod se alcance por su Service antes de estar listo
+  # (Kafka en modo KRaft habla con su controlador por kafka-broker:9093).
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: risk-db-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

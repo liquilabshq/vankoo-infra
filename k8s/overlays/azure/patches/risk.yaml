@@ -1,0 +1,30 @@
+# Risk en Azure:
+#   - lee los certificados verdes del bucket público de Profile (no de MinIO);
+#   - PARCHE TEMPORAL para las demos: acepta fichas RUC firmadas con la CA de
+#     demostración (la misma que docker-compose.kyc-demo.yaml en local). Una ficha
+#     real lleva datos personales y no se usa en una demo. Quitar este bloque, y el
+#     ConfigMap kyc-demo-ca del kustomization, cuando acaben las demos.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: risk-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: risk-service
+          env:
+            # value: null quita el valor fijo de la base (apuntaba a MinIO).
+            - name: GREEN_DOCUMENTS_BASE_URL
+              value: null
+              valueFrom: {configMapKeyRef: {name: vankoo-deploy, key: GREEN_DOCUMENTS_BASE_URL}}
+            - name: KYC_DEMO_CA_PATH
+              value: /app/demo-kyc/ca.pem
+          volumeMounts:
+            - name: kyc-demo-ca
+              mountPath: /app/demo-kyc
+              readOnly: true
+      volumes:
+        - name: kyc-demo-ca
+          configMap:
+            name: kyc-demo-ca

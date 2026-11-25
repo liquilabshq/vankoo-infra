@@ -1,0 +1,63 @@
+# Los discos de Azure llegan con la raíz del volumen propiedad de root. Oracle
+# (uid 54321) y Kafka (uid 1000) no corren como root y no podrían escribir sus
+# datos: fsGroup le da al grupo de la imagen la propiedad del volumen. En kind no
+# hacía falta porque su provisionador crea carpetas abiertas a todos.
+#
+# Además, un disco de Azure formateado trae lost+found en la raíz: la imagen de
+# Oracle ve el directorio «no vacío», da la base por inicializada y no arranca.
+# Por eso Oracle monta una subcarpeta del disco (subPath), que nace vacía.
+#
+# La imagen «faststart» trae la base ya creada dentro de /opt/oracle/oradata:
+# Docker copia ese contenido a un volumen nuevo, Kubernetes no. Sin la copia, la
+# imagen cree que la base existe, no encuentra los archivos de control
+# (ORA-00205) y se reinicia. El initContainer hace esa copia una sola vez.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: investment-db-oracle
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: seed-oradata
+          image: gvenzl/oracle-free:23-slim-faststart
+          command:
+            - sh
+            - -c
+            - |
+              if [ ! -f /seed/.vankoo-seeded ]; then
+                cp -R /opt/oracle/oradata/. /seed/ && touch /seed/.vankoo-seeded
+              fi
+          volumeMounts:
+            - name: data
+              mountPath: /seed
+              subPath: oradata
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: investment-db-oracle
+          # Con 2 nodos de 8 GB la memoria reservable es justa: Oracle reserva 1 GB
+          # (en la base, 1,5) y puede llegar a 2,5 GB como allí.
+          resources:
+            requests:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /opt/oracle/oradata
+              subPath: oradata
+      securityContext:
+        fsGroup: 54321
+        fsGroupChangePolicy: OnRootMismatch
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka-broker
+spec:
+  template:
+    spec:
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch

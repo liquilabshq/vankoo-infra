@@ -734,4 +734,9 @@ resource "azurerm_container_app" "gateway" {
       }
     }
   }
+
+  # Igual que en IAM: la imagen la gestiona el pipeline del repo del gateway.
+  lifecycle {
+    ignore_changes = [template[0].container[0].image]
+  }
 }
