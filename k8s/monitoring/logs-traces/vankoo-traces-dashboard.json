@@ -60,6 +60,222 @@
       }
     },
     {
+      "type": "stat",
+      "title": "Inicio de sesión: p95 (SLO < 0,5 s)",
+      "description": "Latencia p95 del endpoint del flujo «login», calculada por Tempo a partir de las trazas (span-metrics). Por encima del objetivo 10 min salta VankooJourneyLatencyHigh. Vacío = sin tráfico en 5 min.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.4
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "vankoo:journey_latency_p95:5m{journey=\"login\"}"
+        }
+      ],
+      "id": 3,
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 6,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Carga de factura: p95 (SLO < 3 s)",
+      "description": "Latencia p95 del endpoint del flujo «factura», calculada por Tempo a partir de las trazas (span-metrics). Por encima del objetivo 10 min salta VankooJourneyLatencyHigh. Vacío = sin tráfico en 5 min.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 2.4000000000000004
+              },
+              {
+                "color": "red",
+                "value": 3
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "vankoo:journey_latency_p95:5m{journey=\"factura\"}"
+        }
+      ],
+      "id": 4,
+      "gridPos": {
+        "x": 6,
+        "y": 16,
+        "w": 6,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Inversión en subasta: p95 (SLO < 1,5 s)",
+      "description": "Latencia p95 del endpoint del flujo «inversion», calculada por Tempo a partir de las trazas (span-metrics). Por encima del objetivo 10 min salta VankooJourneyLatencyHigh. Vacío = sin tráfico en 5 min.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1.2000000000000002
+              },
+              {
+                "color": "red",
+                "value": 1.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "vankoo:journey_latency_p95:5m{journey=\"inversion\"}"
+        }
+      ],
+      "id": 5,
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 6,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Recarga de saldo: p95 (SLO < 2 s)",
+      "description": "Latencia p95 del endpoint del flujo «recarga», calculada por Tempo a partir de las trazas (span-metrics). Por encima del objetivo 10 min salta VankooJourneyLatencyHigh. Vacío = sin tráfico en 5 min.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1.6
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "vankoo:journey_latency_p95:5m{journey=\"recarga\"}"
+        }
+      ],
+      "id": 6,
+      "gridPos": {
+        "x": 18,
+        "y": 16,
+        "w": 6,
+        "h": 4
+      }
+    },
+    {
       "type": "timeseries",
       "title": "Peticiones por servicio (Rate)",
       "description": "Peticiones por segundo que recibe cada servicio, según sus spans SERVER.",
@@ -100,10 +316,10 @@
           "legendFormat": "{{service}}"
         }
       ],
-      "id": 3,
+      "id": 7,
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 20,
         "w": 8,
         "h": 8
       }
@@ -149,10 +365,10 @@
           "legendFormat": "{{service}}"
         }
       ],
-      "id": 4,
+      "id": 8,
       "gridPos": {
         "x": 8,
-        "y": 16,
+        "y": 20,
         "w": 8,
         "h": 8
       }
@@ -198,10 +414,10 @@
           "legendFormat": "{{service}}"
         }
       ],
-      "id": 5,
+      "id": 9,
       "gridPos": {
         "x": 16,
-        "y": 16,
+        "y": 20,
         "w": 8,
         "h": 8
       }
@@ -256,10 +472,10 @@
         },
         "overrides": []
       },
-      "id": 6,
+      "id": 10,
       "gridPos": {
         "x": 0,
-        "y": 24,
+        "y": 28,
         "w": 12,
         "h": 10
       }
@@ -285,10 +501,10 @@
         "defaults": {},
         "overrides": []
       },
-      "id": 7,
+      "id": 11,
       "gridPos": {
         "x": 12,
-        "y": 24,
+        "y": 28,
         "w": 12,
         "h": 10
       }

@@ -5,7 +5,7 @@
 #     pod (emptyDir): cada nodo de AKS admite solo 4 discos y las bases ya los usan.
 #     Si el pod se reinicia, se pierde el historial (igual que en Prometheus).
 #   - Retención de 48 h, sin cachés memcached, sin gateway nginx y sin canary.
-#   - El ruler evalúa las alertas basadas en logs (vankoo/loki-rules.yaml) y las
+#   - El ruler evalúa las alertas basadas en logs (loki-rules.yaml) y las
 #     manda al mismo Alertmanager que Prometheus.
 deploymentMode: SingleBinary
 
@@ -65,7 +65,7 @@ singleBinary:
     requests: {cpu: 50m, memory: 192Mi}
     limits: {memory: 512Mi}
 
-# Reglas de alerta de logs desde ConfigMaps (k8s/monitoring/vankoo/loki-rules.yaml).
+# Reglas de alerta de logs desde ConfigMaps (k8s/monitoring/logs-traces/loki-rules.yaml).
 sidecar:
   rules:
     enabled: true

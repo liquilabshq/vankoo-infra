@@ -29,6 +29,11 @@ spec:
     env:
       - name: OTEL_EXPORTER_OTLP_PROTOCOL
         value: http/protobuf
+      # Spring Boot mete «[trace_id,span_id]» en cada línea de log (el agente rellena
+      # el MDC); Alloy lo extrae y Grafana salta del log a la traza. Va aquí y no en
+      # los manifiestos para que solo exista en los pods que llevan el agente.
+      - name: LOGGING_PATTERN_CORRELATION
+        value: "[%X{trace_id:-},%X{span_id:-}] "
       # Sin un span raíz por cada vuelta de las tareas @Scheduled (outbox de
       # Investment, buzón de webhooks de Finance), que se repiten cada pocos segundos.
       - name: OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED

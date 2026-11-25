@@ -31,8 +31,7 @@ tests/performance/run.sh stress
 ```bash
 kubectl -n vankoo get hpa -w          # réplicas y % de CPU de cada servicio
 kubectl -n vankoo top pods            # consumo por pod
-# Grafana: https://vankoo-liquilabs.centralus.cloudapp.azure.com/grafana
-#   «Vankoo · Visión general», «Vankoo · SLO y presupuesto de error» y «Vankoo · Trazas»
+kubectl -n monitoring port-forward svc/monitoring-grafana 3002:80   # dashboard «Vankoo · Visión general»
 ```
 
 El HPA escala gateway, IAM, Investment, Invoicing y Profile de 1 a 3 réplicas cuando superan el 70 % de CPU. El clúster tiene 3 nodos, y eso limita cuánto puede crecer.

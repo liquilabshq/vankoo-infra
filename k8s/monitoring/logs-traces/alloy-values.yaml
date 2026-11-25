@@ -8,7 +8,7 @@
 #   namespace, app (app.kubernetes.io/name o el nombre del contenedor), pod,
 #   container y level (error, warn, info, debug), sacado de la propia línea.
 # Metadato estructurado trace_id: los servicios Java lo escriben gracias a
-# LOGGING_PATTERN_CORRELATION (k8s/overlays/azure/patches/otel-instrumentation.yaml),
+# LOGGING_PATTERN_CORRELATION (instrumentation.yaml),
 # y Grafana salta de esa línea a la traza en Tempo.
 controller:
   type: deployment

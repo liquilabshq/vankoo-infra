@@ -1,0 +1,54 @@
+# Reglas que solo funcionan con la capa de logs y trazas (k8s/monitoring/logs-traces),
+# que no está activada en AKS (ver k8s/README.md → Monitoreo). Se aplica con
+# scripts/aks/aks-platform.sh --logs-traces, junto a las de k8s/monitoring/vankoo/rules.yaml.
+#   - Latencia p95 por flujo: traces_spanmetrics_latency, que Tempo calcula de las
+#     trazas de cada servicio (los spans SERVER del endpoint del flujo). El objetivo
+#     de cada flujo es vankoo:journey_latency_objective_seconds (rules.yaml base).
+#   - La propia canalización: logs que no llegan a Loki y trazas que no llegan a Tempo.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: vankoo-logs-traces
+spec:
+  groups:
+    - name: vankoo-slo-journeys-latency
+      rules:
+        - record: vankoo:journey_latency_p95:5m
+          expr: histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service="iam-service", span_kind="SPAN_KIND_SERVER", http_route=~".*/authentication/.*"}[5m])))
+          labels: {journey: login}
+        - record: vankoo:journey_latency_p95:5m
+          expr: histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service="invoicing-service", span_kind="SPAN_KIND_SERVER", http_route=~".*invoices.*"}[5m])))
+          labels: {journey: factura}
+        - record: vankoo:journey_latency_p95:5m
+          expr: histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service="investment-service", span_kind="SPAN_KIND_SERVER", http_route=~".*/auctions.*"}[5m])))
+          labels: {journey: inversion}
+        - record: vankoo:journey_latency_p95:5m
+          expr: histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service="finance-service", span_kind="SPAN_KIND_SERVER", http_route=~".*/(deposits|accounts).*"}[5m])))
+          labels: {journey: recarga}
+        - alert: VankooJourneyLatencyHigh
+          expr: vankoo:journey_latency_p95:5m > on (journey) vankoo:journey_latency_objective_seconds
+          for: 10m
+          labels: {severity: warning, slo: latencia}
+          annotations:
+            summary: "Flujo «{{ $labels.journey }}»: el p95 de la latencia supera su objetivo"
+            description: "p95 actual: {{ $value | humanizeDuration }}."
+            runbook: "k8s/monitoring/RUNBOOK.md#flujo-lento"
+    - name: vankoo-observability
+      rules:
+        - alert: VankooLogPipelineDown
+          expr: |
+            kube_deployment_status_replicas_available{namespace="monitoring", deployment="alloy"} < 1
+            or kube_statefulset_status_replicas_ready{namespace="monitoring", statefulset="loki"} < 1
+            or sum(rate(loki_write_dropped_entries_total[10m])) > 0
+          for: 5m
+          labels: {severity: warning}
+          annotations:
+            summary: "Los logs no están llegando a Loki (Alloy o Loki caídos, o Alloy descarta líneas)"
+            runbook: "k8s/monitoring/RUNBOOK.md#sin-logs-o-sin-trazas"
+        - alert: VankooTracesMissing
+          expr: (sum(rate(tempo_distributor_spans_received_total[15m])) or vector(0)) == 0
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "Tempo no recibe spans desde hace 15 minutos: sin trazas ni SLI de latencia por flujo"
+            runbook: "k8s/monitoring/RUNBOOK.md#sin-logs-o-sin-trazas"

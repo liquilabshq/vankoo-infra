@@ -27,7 +27,7 @@
       "title": "Cómo leer este dashboard",
       "options": {
         "mode": "markdown",
-        "content": "Cada flujo de negocio tiene dos **SLO**: *disponibilidad* (porcentaje de peticiones que no terminan en 5xx) y *latencia* (p95 por debajo de un objetivo). El **presupuesto de error** es lo que el SLO permite fallar (1 − objetivo): 100 % = intacto, 0 % = gastado. El **burn rate** dice a qué velocidad se gasta: 1 = justo al ritmo que agota el presupuesto en 30 días; 14,4 sostenido 1 h dispara la alerta crítica y 6 sostenido 6 h la de aviso (ver `rules.yaml`). Prometheus guarda solo 2 días, así que el presupuesto restante se calcula sobre esa ventana. Fichas de respuesta: `k8s/monitoring/RUNBOOK.md`."
+        "content": "Cada flujo de negocio tiene dos **SLO**: *disponibilidad* (porcentaje de peticiones que no terminan en 5xx) y *latencia*. La disponibilidad sale de la ruta de cada flujo en el gateway; de la latencia, el gateway da la *media* por ruta y el p95 por flujo sale de las trazas (dashboard «Vankoo · Trazas», capa logs-traces). El **presupuesto de error** es lo que el SLO permite fallar (1 − objetivo): 100 % = intacto, 0 % = gastado. El **burn rate** dice a qué velocidad se gasta: 1 = justo al ritmo que agota el presupuesto en 30 días; 14,4 sostenido 1 h dispara la alerta crítica y 6 sostenido 6 h la de aviso (ver `rules.yaml`). Prometheus guarda solo 2 días, así que el presupuesto restante se calcula sobre esa ventana. Fichas de respuesta: `k8s/monitoring/RUNBOOK.md`."
       },
       "id": 1,
       "gridPos": {
@@ -504,8 +504,8 @@
     },
     {
       "type": "stat",
-      "title": "Inicio de sesión: p95 (SLO < 0,5 s)",
-      "description": "Latencia p95 del endpoint del flujo «login», calculada por Tempo a partir de las trazas (span-metrics). Vacío = sin tráfico en 5 min.",
+      "title": "Inicio de sesión: latencia media (objetivo p95 < 0,5 s)",
+      "description": "Tiempo medio de las peticiones del flujo «login» en el gateway (últimos 5 min). Si la media ya se acerca al objetivo del p95, el p95 lo está superando. Vacío = sin tráfico en 5 min.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -545,7 +545,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "vankoo:journey_latency_p95:5m{journey=\"login\"}"
+          "expr": "vankoo:journey_latency_avg:5m{journey=\"login\"}"
         }
       ],
       "id": 12,
@@ -558,8 +558,8 @@
     },
     {
       "type": "stat",
-      "title": "Carga de factura: p95 (SLO < 3 s)",
-      "description": "Latencia p95 del endpoint del flujo «factura», calculada por Tempo a partir de las trazas (span-metrics). Vacío = sin tráfico en 5 min.",
+      "title": "Carga de factura: latencia media (objetivo p95 < 3 s)",
+      "description": "Tiempo medio de las peticiones del flujo «factura» en el gateway (últimos 5 min). Si la media ya se acerca al objetivo del p95, el p95 lo está superando. Vacío = sin tráfico en 5 min.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -599,7 +599,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "vankoo:journey_latency_p95:5m{journey=\"factura\"}"
+          "expr": "vankoo:journey_latency_avg:5m{journey=\"factura\"}"
         }
       ],
       "id": 13,
@@ -612,8 +612,8 @@
     },
     {
       "type": "stat",
-      "title": "Inversión en subasta: p95 (SLO < 1,5 s)",
-      "description": "Latencia p95 del endpoint del flujo «inversion», calculada por Tempo a partir de las trazas (span-metrics). Vacío = sin tráfico en 5 min.",
+      "title": "Inversión en subasta: latencia media (objetivo p95 < 1,5 s)",
+      "description": "Tiempo medio de las peticiones del flujo «inversion» en el gateway (últimos 5 min). Si la media ya se acerca al objetivo del p95, el p95 lo está superando. Vacío = sin tráfico en 5 min.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -653,7 +653,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "vankoo:journey_latency_p95:5m{journey=\"inversion\"}"
+          "expr": "vankoo:journey_latency_avg:5m{journey=\"inversion\"}"
         }
       ],
       "id": 14,
@@ -666,8 +666,8 @@
     },
     {
       "type": "stat",
-      "title": "Recarga de saldo: p95 (SLO < 2 s)",
-      "description": "Latencia p95 del endpoint del flujo «recarga», calculada por Tempo a partir de las trazas (span-metrics). Vacío = sin tráfico en 5 min.",
+      "title": "Recarga de saldo: latencia media (objetivo p95 < 2 s)",
+      "description": "Tiempo medio de las peticiones del flujo «recarga» en el gateway (últimos 5 min). Si la media ya se acerca al objetivo del p95, el p95 lo está superando. Vacío = sin tráfico en 5 min.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -707,7 +707,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "vankoo:journey_latency_p95:5m{journey=\"recarga\"}"
+          "expr": "vankoo:journey_latency_avg:5m{journey=\"recarga\"}"
         }
       ],
       "id": 15,
@@ -1027,8 +1027,8 @@
     },
     {
       "type": "timeseries",
-      "title": "Latencia p95 por flujo",
-      "description": "p95 de cada flujo frente al tiempo. Compárala con su objetivo (tabla en rules.yaml): login 0,5 s, factura 3 s, inversión 1,5 s, recarga 2 s.",
+      "title": "Latencia por flujo",
+      "description": "Latencia media de cada flujo en el gateway y p95 del API completo. Objetivos de p95 (rules.yaml): API 1 s, login 0,5 s, factura 3 s, inversión 1,5 s, recarga 2 s.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1062,13 +1062,13 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "vankoo:journey_latency_p95:5m",
-          "legendFormat": "{{journey}}"
+          "expr": "vankoo:journey_latency_avg:5m",
+          "legendFormat": "{{journey}} (media)"
         },
         {
           "refId": "B",
           "expr": "vankoo:gateway_latency_p95:5m",
-          "legendFormat": "api"
+          "legendFormat": "api (p95)"
         }
       ],
       "id": 22,

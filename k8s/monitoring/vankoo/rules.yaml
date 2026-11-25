@@ -1,27 +1,31 @@
-# SLO de Vankoo y alertas (PrometheusRule). Las evalúa Prometheus cada 30 s; las
-# alertas basadas en logs están en loki-rules.yaml y las fichas de respuesta en
-# k8s/monitoring/RUNBOOK.md. Los objetivos de cada flujo viven en una sola serie
-# (vankoo:journey_slo_objective y vankoo:journey_latency_objective_seconds): las
-# alertas y el dashboard los leen de ahí, así que cambiar un objetivo es cambiar
-# una línea.
+# SLO de Vankoo y alertas (PrometheusRule). Las aplica scripts/aks/aks-platform.sh y
+# las evalúa Prometheus cada 30 s; las fichas de respuesta están en
+# k8s/monitoring/RUNBOOK.md. Solo usan métricas que ya existen en AKS (API Gateway y
+# kube-state-metrics). La latencia p95 por flujo y las alertas de logs y trazas están
+# en k8s/monitoring/logs-traces/, que no está activada en AKS (ver k8s/README.md).
+#
+# Los objetivos de cada flujo viven en una sola serie (vankoo:journey_slo_objective y
+# vankoo:journey_latency_objective_seconds): alertas y dashboards los leen de ahí, así
+# que cambiar un objetivo es cambiar una línea.
 #
 # SLI (de dónde sale cada medición):
 #   - API completo: http.server.requests del API Gateway, sin /actuator (las sondas
 #     y el raspado de Prometheus no son tráfico de usuarios).
 #   - Disponibilidad por flujo: spring.cloud.gateway.requests del gateway, que trae
 #     la ruta (routeId) y el código HTTP de cada petición que reenvía.
-#   - Latencia por flujo: traces_spanmetrics_latency, que Tempo calcula de las trazas
-#     de cada servicio (los spans SERVER del endpoint del flujo).
+#   - Latencia media por flujo: la misma métrica (suma / cuenta). El gateway no publica
+#     histograma por ruta, así que el p95 por flujo sale de las trazas (* en la tabla,
+#     capa logs-traces).
 #   Una petición «mala» es la que termina en 5xx. Los 4xx (token vencido, datos
 #   inválidos) son errores del cliente y no gastan presupuesto.
 #
 # SLO (ventana objetivo de 30 días):
-#   | Flujo (journey)                  | Ruta del gateway (routeId)    | Disponibilidad | p95     |
-#   | API completo (api)               | todas                         | 99 %           | < 1 s   |
-#   | Inicio de sesión (login)         | iam-auth-public               | 99,5 %         | < 0,5 s |
-#   | Carga de factura (factura)       | invoicing-invoices-protected  | 99 %           | < 3 s   |
-#   | Inversión en subasta (inversion) | investment-auctions-protected | 99 %           | < 1,5 s |
-#   | Recarga de saldo (recarga)       | finance-investor-protected    | 99 %           | < 2 s   |
+#   | Flujo (journey)                  | Ruta del gateway (routeId)    | Disponibilidad | Latencia p95 |
+#   | API completo (api)               | todas                         | 99 %           | < 1 s        |
+#   | Inicio de sesión (login)         | iam-auth-public               | 99,5 %         | < 0,5 s *    |
+#   | Carga de factura (factura)       | invoicing-invoices-protected  | 99 %           | < 3 s *      |
+#   | Inversión en subasta (inversion) | investment-auctions-protected | 99 %           | < 1,5 s *    |
+#   | Recarga de saldo (recarga)       | finance-investor-protected    | 99 %           | < 2 s *      |
 #
 # Prometheus solo guarda 2 días (sin disco persistente, ver values.yaml): el
 # presupuesto de error «restante» se calcula sobre esa ventana (rate2d) y no sobre
@@ -54,6 +58,8 @@ spec:
           expr: 1 - (vankoo:gateway_errors:rate5m / clamp_min(vankoo:gateway_requests:rate5m, 1e-9))
         - record: vankoo:gateway_latency_p95:5m
           expr: histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{namespace="vankoo", job="api-gateway", uri!~"/actuator.*"}[5m])))
+        - record: vankoo:gateway_error_ratio:rate5m
+          expr: vankoo:gateway_errors:rate5m / clamp_min(vankoo:gateway_requests:rate5m, 1e-9)
         - record: vankoo:gateway_error_ratio:rate30m
           expr: (sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*", status=~"5.."}[30m])) or vector(0)) / clamp_min(sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*"}[30m])), 1e-9)
         - record: vankoo:gateway_error_ratio:rate1h
@@ -62,8 +68,6 @@ spec:
           expr: (sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*", status=~"5.."}[6h])) or vector(0)) / clamp_min(sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*"}[6h])), 1e-9)
         - record: vankoo:gateway_error_ratio:rate2d
           expr: (sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*", status=~"5.."}[2d])) or vector(0)) / clamp_min(sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*"}[2d])), 1e-9)
-        - record: vankoo:gateway_error_ratio:rate5m
-          expr: vankoo:gateway_errors:rate5m / clamp_min(vankoo:gateway_requests:rate5m, 1e-9)
         - alert: VankooApiErrorBudgetFastBurn
           expr: |
             vankoo:gateway_error_ratio:rate1h > (14.4 * 0.01)
@@ -133,8 +137,8 @@ spec:
         - record: vankoo:journey_error_ratio:rate2d
           expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public", httpStatusCode=~"5.."}[2d])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public"}[2d])), 1e-9)
           labels: {journey: login}
-        - record: vankoo:journey_latency_p95:5m
-          expr: histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service="iam-service", span_kind="SPAN_KIND_SERVER", http_route=~".*/authentication/.*"}[5m])))
+        - record: vankoo:journey_latency_avg:5m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_sum{namespace="vankoo", routeId="iam-auth-public"}[5m])) / sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public"}[5m]))
           labels: {journey: login}
         # Carga de factura: invoicing-invoices-protected → invoicing-service
         - record: vankoo:journey_slo_objective
@@ -173,8 +177,8 @@ spec:
         - record: vankoo:journey_error_ratio:rate2d
           expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected", httpStatusCode=~"5.."}[2d])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected"}[2d])), 1e-9)
           labels: {journey: factura}
-        - record: vankoo:journey_latency_p95:5m
-          expr: histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service="invoicing-service", span_kind="SPAN_KIND_SERVER", http_route=~".*invoices.*"}[5m])))
+        - record: vankoo:journey_latency_avg:5m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_sum{namespace="vankoo", routeId="invoicing-invoices-protected"}[5m])) / sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected"}[5m]))
           labels: {journey: factura}
         # Inversión en subasta: investment-auctions-protected → investment-service
         - record: vankoo:journey_slo_objective
@@ -213,8 +217,8 @@ spec:
         - record: vankoo:journey_error_ratio:rate2d
           expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected", httpStatusCode=~"5.."}[2d])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected"}[2d])), 1e-9)
           labels: {journey: inversion}
-        - record: vankoo:journey_latency_p95:5m
-          expr: histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service="investment-service", span_kind="SPAN_KIND_SERVER", http_route=~".*/auctions.*"}[5m])))
+        - record: vankoo:journey_latency_avg:5m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_sum{namespace="vankoo", routeId="investment-auctions-protected"}[5m])) / sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected"}[5m]))
           labels: {journey: inversion}
         # Recarga de saldo: finance-investor-protected → finance-service
         - record: vankoo:journey_slo_objective
@@ -253,8 +257,8 @@ spec:
         - record: vankoo:journey_error_ratio:rate2d
           expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected", httpStatusCode=~"5.."}[2d])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected"}[2d])), 1e-9)
           labels: {journey: recarga}
-        - record: vankoo:journey_latency_p95:5m
-          expr: histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service="finance-service", span_kind="SPAN_KIND_SERVER", http_route=~".*/(deposits|accounts).*"}[5m])))
+        - record: vankoo:journey_latency_avg:5m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_sum{namespace="vankoo", routeId="finance-investor-protected"}[5m])) / sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected"}[5m]))
           labels: {journey: recarga}
         - record: vankoo:journey_availability:ratio5m
           expr: 1 - vankoo:journey_error_ratio:rate5m
@@ -284,14 +288,6 @@ spec:
             summary: "Flujo «{{ $labels.journey }}»: acumula 5xx por encima de lo sostenible"
             description: "{{ $value | humanizePercentage }} de las peticiones de las últimas 6 h fallaron con 5xx."
             runbook: "k8s/monitoring/RUNBOOK.md#flujo-con-errores-5xx"
-        - alert: VankooJourneyLatencyHigh
-          expr: vankoo:journey_latency_p95:5m > on (journey) vankoo:journey_latency_objective_seconds
-          for: 10m
-          labels: {severity: warning, slo: latencia}
-          annotations:
-            summary: "Flujo «{{ $labels.journey }}»: el p95 de la latencia supera su objetivo"
-            description: "p95 actual: {{ $value | humanizeDuration }}."
-            runbook: "k8s/monitoring/RUNBOOK.md#flujo-lento"
     - name: vankoo-workloads
       rules:
         - alert: VankooPodRestarting
@@ -321,22 +317,3 @@ spec:
           annotations:
             summary: "El nodo {{ $labels.instance }} usa más del 90 % de su memoria"
             runbook: "k8s/monitoring/RUNBOOK.md#nodo-sin-memoria"
-    - name: vankoo-observability
-      rules:
-        - alert: VankooLogPipelineDown
-          expr: |
-            kube_deployment_status_replicas_available{namespace="monitoring", deployment="alloy"} < 1
-            or kube_statefulset_status_replicas_ready{namespace="monitoring", statefulset="loki"} < 1
-            or sum(rate(loki_write_dropped_entries_total[10m])) > 0
-          for: 5m
-          labels: {severity: warning}
-          annotations:
-            summary: "Los logs no están llegando a Loki (Alloy o Loki caídos, o Alloy descarta líneas)"
-            runbook: "k8s/monitoring/RUNBOOK.md#sin-logs-o-sin-trazas"
-        - alert: VankooTracesMissing
-          expr: (sum(rate(tempo_distributor_spans_received_total[15m])) or vector(0)) == 0
-          for: 10m
-          labels: {severity: warning}
-          annotations:
-            summary: "Tempo no recibe spans desde hace 15 minutos: sin trazas ni SLI de latencia por flujo"
-            runbook: "k8s/monitoring/RUNBOOK.md#sin-logs-o-sin-trazas"

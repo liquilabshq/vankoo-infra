@@ -2,7 +2,7 @@
 # en scripts/aks/aks-platform.sh). Su webhook inyecta el agente de OpenTelemetry en
 # los pods anotados con instrumentation.opentelemetry.io/inject-<lenguaje>
 # (k8s/overlays/azure/patches/otel-instrumentation.yaml), según el recurso
-# Instrumentation «vankoo» (k8s/monitoring/vankoo/instrumentation.yaml). Así los
+# Instrumentation «vankoo» (k8s/monitoring/logs-traces/instrumentation.yaml). Así los
 # servicios mandan trazas a Tempo sin cambiar su código ni su imagen.
 #
 # El certificado del webhook lo emite el cert-manager que ya está en el clúster.

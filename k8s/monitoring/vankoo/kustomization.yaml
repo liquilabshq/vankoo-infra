@@ -1,18 +1,15 @@
-# Monitoreo propio de Vankoo sobre la plataforma de observabilidad (namespace
-# monitoring). Lo aplica scripts/aks/aks-platform.sh después de instalar los charts
-# (el recurso Instrumentation necesita los CRD del OpenTelemetry Operator).
+# Monitoreo propio de Vankoo sobre kube-prometheus-stack (namespace monitoring).
+# Lo aplica scripts/aks/aks-platform.sh después de instalar el chart.
 #   service-monitor.yaml   Prometheus raspa las métricas del API Gateway
-#   rules.yaml             SLI/SLO, burn rate y alertas (Prometheus)
-#   loki-rules.yaml        alertas basadas en logs (ruler de Loki)
-#   instrumentation.yaml   cómo se inyectan los agentes de trazas en los servicios
-#   *-dashboard.json       dashboards de Grafana (carpeta General)
+#   rules.yaml             SLI/SLO, burn rate y alertas
+#   *-dashboard.json       dashboards de Grafana
+# La capa de logs y trazas (k8s/monitoring/logs-traces) tiene su propia kustomization.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: monitoring
 resources:
   - service-monitor.yaml
   - rules.yaml
-  - instrumentation.yaml
 generatorOptions:
   disableNameSuffixHash: true
 configMapGenerator:
@@ -28,21 +25,3 @@ configMapGenerator:
     options:
       labels:
         grafana_dashboard: "1"
-  - name: vankoo-logs-dashboard
-    files:
-      - vankoo-logs-dashboard.json
-    options:
-      labels:
-        grafana_dashboard: "1"
-  - name: vankoo-traces-dashboard
-    files:
-      - vankoo-traces-dashboard.json
-    options:
-      labels:
-        grafana_dashboard: "1"
-  - name: vankoo-loki-rules
-    files:
-      - loki-rules.yaml
-    options:
-      labels:
-        loki_rule: "1"

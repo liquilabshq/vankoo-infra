@@ -72,7 +72,9 @@ patches:
   - path: patches/public-urls.yaml
   - path: patches/volume-permissions.yaml
   - path: patches/risk-db-size.yaml
-  - path: patches/otel-instrumentation.yaml
+  # Trazas (capa k8s/monitoring/logs-traces): desactivadas en AKS por falta de
+  # memoria. Ver la cabecera del parche antes de descomentar.
+  # - path: patches/otel-instrumentation.yaml
   - path: patches/ingress.yaml
     target:
       kind: Ingress
