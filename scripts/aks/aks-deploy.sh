@@ -110,6 +110,10 @@ investment_db_password="$(keep INVESTMENT_DB_PASSWORD)"
   printf 'MINIO_ROOT_USER=unused\nMINIO_ROOT_PASSWORD=%s\n' "$(keep MINIO_ROOT_PASSWORD)"
   printf 'PUSH_TOPIC_SECRET=%s\n' "$push_topic_secret"
   [[ "$dni_enabled" == true ]] && printf 'DNI_VERIFICATION_KEY=%s\n' "$dni_key"
+  # Licencia de Axon Server: conexión a Axoniq Platform (<environment-id>:<access-token>).
+  # Sin ella, Axon corre sin licencia y se apaga a las 12 h.
+  axon_auth="$(env_value "$ENV_FILE" AXONIQ_PLATFORM_AUTHENTICATION)"
+  [[ -n "$axon_auth" ]] && printf 'AXONIQ_PLATFORM_AUTHENTICATION=%s\n' "$axon_auth"
   if [[ "$push_provider" == firebase ]]; then
     for key in FIREBASE_PROJECT_ID FIREBASE_CLIENT_EMAIL FIREBASE_PRIVATE_KEY; do
       printf '%s=%s\n' "$key" "$(env_value "$ENV_FILE" "$key")"

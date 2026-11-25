@@ -173,6 +173,15 @@ función no responde. En la nube la función usa el proveedor `fake` (ver
 Gómez» sale verificado y cualquier otro DNI, rechazado. La función tiene que estar encendida
 (`az functionapp start`).
 
+### Licencia de Axon Server
+
+La imagen de Axon Server sin licencia se apaga a las 12 horas. En AKS se conecta a Axoniq
+Platform, que le da y le renueva la licencia: el valor `<environment-id>:<access-token>` (en
+platform.axoniq.io, guía de Axon Server con «Platform connection» y el token del espacio de
+trabajo) va en el `.env` como `AXONIQ_PLATFORM_AUTHENTICATION`, y `aks-deploy.sh` lo pone en
+`vankoo-secrets`. Aun sin licencia, los datos de Axon (control, eventos y registro) están en su
+disco y sobreviven al reinicio.
+
 ### Stripe en AKS
 
 Stripe avisa de los pagos directamente a AKS: el endpoint de webhook está registrado en la cuenta
