@@ -1,10 +1,15 @@
 # Monitoreo del clúster de AKS (chart prometheus-community/kube-prometheus-stack,
-# versión fijada en scripts/aks/aks-monitoring.sh): Prometheus, Alertmanager,
+# versión fijada en scripts/aks/aks-platform.sh): Prometheus, Alertmanager,
 # Grafana, node-exporter y kube-state-metrics. Versión ligera para 3 nodos de
 # 8 GB: retención de 2 días y sin discos persistentes (cada nodo admite solo 4
 # discos y las bases ya los usan); si Prometheus se reinicia, pierde el historial.
 # En AKS el plano de control lo gestiona Azure: no se raspan etcd, scheduler,
 # controller-manager ni kube-proxy.
+#
+# Junto a este chart, aks-platform.sh instala Loki (logs, loki-values.yaml), Alloy
+# (recolector de logs, alloy-values.yaml), Tempo (trazas, tempo-values.yaml) y el
+# OpenTelemetry Operator (agentes de trazas, otel-operator-values.yaml). Grafana
+# reúne las tres señales: métricas, logs y trazas.
 kubeEtcd: {enabled: false}
 kubeScheduler: {enabled: false}
 kubeControllerManager: {enabled: false}
@@ -17,11 +22,54 @@ prometheus:
     serviceMonitorSelectorNilUsesHelmValues: false
     podMonitorSelectorNilUsesHelmValues: false
     ruleSelectorNilUsesHelmValues: false
+    # El metrics-generator de Tempo escribe aquí, por remote write, las métricas que
+    # calcula de las trazas (traces_spanmetrics_*, traces_service_graph_*).
+    enableRemoteWriteReceiver: true
     resources:
       requests: {cpu: 100m, memory: 384Mi}
       limits: {memory: 1Gi}
 
+# Las alertas se ven en Grafana (Alerting → Alert rules / Silences, con el datasource
+# Alertmanager) y en la UI de Alertmanager; no se envían a ningún canal externo
+# (receptor «null»). Para añadir uno (correo, Discord, Teams) basta un receptor
+# nuevo en route.routes, ver k8s/monitoring/RUNBOOK.md.
 alertmanager:
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      # Una notificación por alerta, severidad y flujo (no por namespace, como trae
+      # el chart): en el panel se ve cada problema por separado.
+      group_by: [alertname, severity, journey]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      receiver: "null"
+      routes:
+        - receiver: "null"
+          matchers: ['alertname = "Watchdog"']
+    inhibit_rules:
+      # Si un flujo ya tiene una alerta crítica (quema rápida del presupuesto), se
+      # silencian sus avisos menores (quema lenta, latencia): la causa es la misma.
+      - source_matchers: ['severity = critical']
+        target_matchers: ['severity = warning', 'journey =~ ".+"']
+        equal: [journey]
+      # Un servicio sin réplicas explica sus reinicios y su ráfaga de errores en logs.
+      - source_matchers: ['alertname = VankooDeploymentUnavailable']
+        target_matchers: ['alertname =~ "VankooPodRestarting|VankooErrorLogsSpike"']
+        equal: [app]
+      # Reglas por defecto del chart (alertas info y su inhibidor).
+      - source_matchers: ['severity = critical']
+        target_matchers: ['severity =~ warning|info']
+        equal: [namespace, alertname]
+      - source_matchers: ['alertname = InfoInhibitor']
+        target_matchers: ['severity = info']
+        equal: [namespace]
+      - target_matchers: ['alertname = InfoInhibitor']
+    receivers:
+      - name: "null"
+    templates:
+      - /etc/alertmanager/config/*.tmpl
   alertmanagerSpec:
     resources:
       requests: {cpu: 10m, memory: 32Mi}
@@ -29,15 +77,94 @@ alertmanager:
 
 grafana:
   resources:
-    requests: {cpu: 20m, memory: 96Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 20m, memory: 128Mi}
+    limits: {memory: 384Mi}
+  # Usuario admin con la contraseña del Secret grafana-admin, que crea
+  # scripts/aks/aks-platform.sh (GRAFANA_ADMIN_PASSWORD del .env o una aleatoria).
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  # Grafana pública en https://vankoo-liquilabs.centralus.cloudapp.azure.com/grafana,
+  # con usuario y contraseña. El Ingress no pide otro certificado: comparte el host
+  # con el Ingress «vankoo» (k8s/overlays/azure/patches/ingress.yaml) y ingress-nginx
+  # sirve ese host con el certificado vankoo-tls que ya emitió cert-manager.
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    hosts: [vankoo-liquilabs.centralus.cloudapp.azure.com]
+    path: /grafana
+    pathType: Prefix
+  grafana.ini:
+    server:
+      domain: vankoo-liquilabs.centralus.cloudapp.azure.com
+      root_url: "%(protocol)s://%(domain)s/grafana/"
+      serve_from_sub_path: true
+    auth.anonymous:
+      enabled: false
+    users:
+      allow_sign_up: false
+    analytics:
+      reporting_enabled: false
+      check_for_updates: false
   # Los dashboards de Vankoo se cargan desde ConfigMaps con esta etiqueta
-  # (k8s/monitoring/dashboards).
+  # (k8s/monitoring/vankoo).
   sidecar:
     dashboards:
       enabled: true
       label: grafana_dashboard
       searchNamespace: ALL
+  # Prometheus y Alertmanager los define el chart (uid prometheus y alertmanager).
+  # Loki y Tempo van enlazados entre sí: de una línea de log con trace_id se abre
+  # la traza, y de un span se abren los logs del mismo servicio en ese momento.
+  # ($$ escapa el $ de las variables de Grafana en el archivo de aprovisionamiento.)
+  additionalDataSources:
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      url: http://loki.monitoring:3100
+      jsonData:
+        maxLines: 1000
+        derivedFields:
+          - name: trace_id
+            matcherType: label
+            matcherRegex: trace_id
+            datasourceUid: tempo
+            url: "$${__value.raw}"
+            urlDisplayLabel: Ver traza
+    - name: Tempo
+      uid: tempo
+      type: tempo
+      access: proxy
+      url: http://tempo.monitoring:3200
+      jsonData:
+        serviceMap:
+          datasourceUid: prometheus
+        nodeGraph:
+          enabled: true
+        tracesToLogsV2:
+          datasourceUid: loki
+          spanStartTimeShift: "-2m"
+          spanEndTimeShift: "2m"
+          filterByTraceID: false
+          filterBySpanID: false
+          customQuery: true
+          query: '{namespace="vankoo", app="$${__span.tags["service.name"]}"}'
+        tracesToMetrics:
+          datasourceUid: prometheus
+          spanStartTimeShift: "-5m"
+          spanEndTimeShift: "5m"
+          tags:
+            - key: service.name
+              value: service
+          queries:
+            - name: Peticiones por segundo
+              query: 'sum(rate(traces_spanmetrics_calls_total{$$__tags}[5m]))'
+            - name: Latencia p95
+              query: 'histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{$$__tags}[5m])))'
 
 prometheusOperator:
   resources:
