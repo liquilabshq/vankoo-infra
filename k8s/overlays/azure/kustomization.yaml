@@ -58,7 +58,7 @@ images:
     newTag: aks
   - name: vankoo-mype-web
     newName: vankooacrqxv9yb.azurecr.io/mype-web
-    newTag: aks
+    newTag: rollback-drill
 
 patches:
   - path: patches/delete-minio.yaml
