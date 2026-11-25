@@ -22,6 +22,10 @@ spec:
         app.kubernetes.io/name: invoicing-service
         app.kubernetes.io/component: microservice
     spec:
+      # Identidad propia y sin token de la API: el servicio no habla con Kubernetes
+      # (ver k8s/base/rbac/service-accounts.yaml).
+      serviceAccountName: invoicing-service
+      automountServiceAccountToken: false
       # Cada imagen ya fija su usuario sin privilegios (USER en el Dockerfile). No se
       # declara runAsNonRoot porque varias usan un usuario con nombre (spring, risk)
       # y Kubernetes solo puede comprobarlo con un UID numérico.
