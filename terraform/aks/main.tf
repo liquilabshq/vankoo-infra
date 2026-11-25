@@ -41,6 +41,12 @@ locals {
   suffix = data.terraform_remote_state.core.outputs.suffix
 }
 
+# Riesgo aceptado (Trivy AVD-AZU-0041, CRITICAL): el API server del clúster no limita
+# las IP de origen. El equipo administra el clúster con kubectl desde casa, con IP que
+# cambian, y una lista fija lo dejaría fuera. Lo mitigan: credenciales de Entra/RBAC del
+# grupo para obtener el kubeconfig, TLS y nada de cuentas locales compartidas. Motivo y
+# plan para producción: «Riesgos aceptados» en k8s/README.md.
+#trivy:ignore:AVD-AZU-0041
 resource "azurerm_kubernetes_cluster" "vankoo" {
   name                = "vankoo-aks-${local.suffix}"
   resource_group_name = data.azurerm_resource_group.vankoo.name
