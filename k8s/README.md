@@ -164,10 +164,14 @@ Apple Developer).
 
 ### Stripe en AKS
 
-El webhook de prueba llega con `stripe listen --forward-to https://vankoo-liquilabs.centralus.cloudapp.azure.com/finance/api/v1/payment-providers/stripe/webhooks`.
-Su `whsec` tiene que ir en `vankoo-secrets` (`STRIPE_WEBHOOK_SECRET`), seguido de
-`kubectl -n vankoo rollout restart deploy/finance-service`. `aks-deploy.sh` lo vuelve a poner
-con el valor del `.env`.
+Stripe avisa de los pagos directamente a AKS: el endpoint de webhook está registrado en la cuenta
+de prueba de Stripe de Vankoo, apuntando a
+`https://<host>/finance/api/v1/payment-providers/stripe/webhooks` (un Ingress aparte que quita el
+prefijo `/finance`) con los eventos `checkout.session.completed`, `…async_payment_succeeded`,
+`…async_payment_failed` y `…expired`. Su secreto de firma va en el `.env` como
+`AKS_STRIPE_WEBHOOK_SECRET`, y `aks-deploy.sh` lo pone en `vankoo-secrets` como
+`STRIPE_WEBHOOK_SECRET` (el `STRIPE_WEBHOOK_SECRET` del `.env` es el de `stripe listen`, solo para
+el compose local). No hace falta ninguna máquina reenviando eventos.
 
 ### Validado en AKS (24 nov 2026)
 

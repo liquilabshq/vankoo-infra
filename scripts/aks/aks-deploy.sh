@@ -104,7 +104,15 @@ investment_db_password="$(keep INVESTMENT_DB_PASSWORD)"
     done
   fi
   [[ -n "$acs_connection_string" ]] && printf 'ACS_CONNECTION_STRING=%s\n' "$acs_connection_string"
-  for key in AZURE_OCR_ENDPOINT AZURE_OCR_API_KEY STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET OPENAI_API_KEY \
+  # El webhook de Stripe de AKS tiene su propio secreto (AKS_STRIPE_WEBHOOK_SECRET, del
+  # endpoint registrado en Stripe); STRIPE_WEBHOOK_SECRET es el de `stripe listen` en local.
+  aks_whsec="$(env_value "$ENV_FILE" AKS_STRIPE_WEBHOOK_SECRET)"
+  if [[ -n "$aks_whsec" ]]; then
+    printf 'STRIPE_WEBHOOK_SECRET=%s\n' "$aks_whsec"
+  else
+    printf 'STRIPE_WEBHOOK_SECRET=%s\n' "$(from_env STRIPE_WEBHOOK_SECRET)"
+  fi
+  for key in AZURE_OCR_ENDPOINT AZURE_OCR_API_KEY STRIPE_SECRET_KEY OPENAI_API_KEY \
              AWS_REGION AWS_S3_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
              PROFILE_AWS_REGION PROFILE_AWS_S3_BUCKET PROFILE_AWS_ACCESS_KEY_ID PROFILE_AWS_SECRET_ACCESS_KEY; do
     printf '%s=%s\n' "$key" "$(from_env "$key")"
