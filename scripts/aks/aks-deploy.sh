@@ -7,7 +7,9 @@
 #     externas leídas del .env de vankoo-infra (OCR, Stripe, S3, OpenAI), sin
 #     imprimirlas ni dejarlas en disco.
 #   - ConfigMap vankoo-deploy: URL pública (IP del Ingress), bucket de certificados y
-#     correo: Azure Communication Services si existe la capa email, si no Mailpit.
+#     correo: Azure Communication Services si existe la capa email, si no Mailpit;
+#     push: Firebase si el .env trae su cuenta de servicio, si no solo log;
+#     KYC del inversionista: la función DNI si existe la capa functions, si no manual.
 #   - ConfigMap kyc-demo-ca: CA de demostración del KYC (PARCHE TEMPORAL).
 #
 # Uso: scripts/aks/aks-deploy.sh [--env-file <ruta>] [--restart]
@@ -60,6 +62,30 @@ else
   acs_connection_string=""
 fi
 
+# Push: Firebase Cloud Messaging si el .env trae la cuenta de servicio
+# (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL y FIREBASE_PRIVATE_KEY); si no,
+# Notification solo escribe los push en el log.
+push_provider=logging
+if [[ -n "$(env_value "$ENV_FILE" FIREBASE_PROJECT_ID)" && -n "$(env_value "$ENV_FILE" FIREBASE_CLIENT_EMAIL)" \
+      && -n "$(env_value "$ENV_FILE" FIREBASE_PRIVATE_KEY)" ]]; then
+  push_provider="$(env_value "$ENV_FILE" NOTIFICATION_PUSH_PROVIDER)"
+  [[ -n "$push_provider" ]] || push_provider=firebase
+fi
+# El secreto de los topics de FCM: el del .env si existe (el mismo que en local),
+# si no el que ya tenía el clúster.
+push_topic_secret="$(env_value "$ENV_FILE" NOTIFICATION_PUSH_TOPIC_SECRET)"
+[[ -n "$push_topic_secret" ]] || push_topic_secret="$(keep PUSH_TOPIC_SECRET)"
+
+# KYC del inversionista: verificación automática del DNI con la función serverless de la
+# capa terraform/functions, si existe y está encendida; si no, revisión manual.
+dni_enabled=false; dni_url=""; dni_key=""
+if tf_init functions >/dev/null 2>&1 && dni_url="$(tf_output functions verify_dni_url 2>/dev/null)" \
+    && [[ -n "$dni_url" ]]; then
+  dni_app="$(tf_output functions function_app_name 2>/dev/null)"
+  dni_key="$(az functionapp keys list -g "$VANKOO_RG" -n "$dni_app" --query functionKeys.default -o tsv 2>/dev/null || true)"
+  [[ -n "$dni_key" ]] && dni_enabled=true || warn "No pude leer la clave de la función DNI: el KYC del inversionista queda manual"
+fi
+
 secrets="$(mktemp)"; chmod 600 "$secrets"
 trap 'rm -f "$secrets"' EXIT
 iam_db_password="$(keep IAM_DB_PASSWORD)"
@@ -82,9 +108,23 @@ investment_db_password="$(keep INVESTMENT_DB_PASSWORD)"
   # MinIO no se despliega en Azure (archivos en S3), pero los manifiestos base aún
   # referencian estas claves.
   printf 'MINIO_ROOT_USER=unused\nMINIO_ROOT_PASSWORD=%s\n' "$(keep MINIO_ROOT_PASSWORD)"
-  printf 'PUSH_TOPIC_SECRET=%s\n' "$(keep PUSH_TOPIC_SECRET)"
+  printf 'PUSH_TOPIC_SECRET=%s\n' "$push_topic_secret"
+  [[ "$dni_enabled" == true ]] && printf 'DNI_VERIFICATION_KEY=%s\n' "$dni_key"
+  if [[ "$push_provider" == firebase ]]; then
+    for key in FIREBASE_PROJECT_ID FIREBASE_CLIENT_EMAIL FIREBASE_PRIVATE_KEY; do
+      printf '%s=%s\n' "$key" "$(env_value "$ENV_FILE" "$key")"
+    done
+  fi
   [[ -n "$acs_connection_string" ]] && printf 'ACS_CONNECTION_STRING=%s\n' "$acs_connection_string"
-  for key in AZURE_OCR_ENDPOINT AZURE_OCR_API_KEY STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET OPENAI_API_KEY \
+  # El webhook de Stripe de AKS tiene su propio secreto (AKS_STRIPE_WEBHOOK_SECRET, del
+  # endpoint registrado en Stripe); STRIPE_WEBHOOK_SECRET es el de `stripe listen` en local.
+  aks_whsec="$(env_value "$ENV_FILE" AKS_STRIPE_WEBHOOK_SECRET)"
+  if [[ -n "$aks_whsec" ]]; then
+    printf 'STRIPE_WEBHOOK_SECRET=%s\n' "$aks_whsec"
+  else
+    printf 'STRIPE_WEBHOOK_SECRET=%s\n' "$(from_env STRIPE_WEBHOOK_SECRET)"
+  fi
+  for key in AZURE_OCR_ENDPOINT AZURE_OCR_API_KEY STRIPE_SECRET_KEY OPENAI_API_KEY \
              AWS_REGION AWS_S3_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
              PROFILE_AWS_REGION PROFILE_AWS_S3_BUCKET PROFILE_AWS_ACCESS_KEY_ID PROFILE_AWS_SECRET_ACCESS_KEY; do
     printf '%s=%s\n' "$key" "$(from_env "$key")"
@@ -101,6 +141,9 @@ kubectl -n "$NAMESPACE" create configmap vankoo-deploy \
   --from-literal=WEB_APP_URL="$public_url" \
   --from-literal=PASSWORD_RESET_WEB_URL="$public_url/iam/reset" \
   --from-literal=GREEN_DOCUMENTS_BASE_URL="https://$bucket.s3.$region.amazonaws.com" \
+  --from-literal=PUSH_PROVIDER="$push_provider" \
+  --from-literal=DNI_VERIFICATION_ENABLED="$dni_enabled" \
+  --from-literal=DNI_VERIFICATION_URL="$dni_url" \
   --from-literal=EMAIL_PROVIDER="$email_provider" \
   --from-literal=MAIL_FROM="$mail_from" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null

@@ -152,12 +152,37 @@ acceso (HMAC). No se usa el SMTP de ACS porque exige registrar una app de Entra,
 universidad no lo permite. Sin la capa, todo va a Mailpit como en local. El dominio administrado
 tiene límites de envío bajos: sirve para la demo, no para producción.
 
+### Push (Firebase Cloud Messaging)
+
+Si el `.env` de vankoo-infra trae la cuenta de servicio de Firebase (`FIREBASE_PROJECT_ID`,
+`FIREBASE_CLIENT_EMAIL` y `FIREBASE_PRIVATE_KEY`, con los saltos de línea de la clave escritos como
+`\n`), `aks-deploy.sh` pone `PUSH_PROVIDER=firebase` en `vankoo-deploy` y las tres claves en
+`vankoo-secrets`. Notification envía entonces los avisos por FCM a la app Android, que registra su
+dispositivo al iniciar sesión. Si no las trae, los push solo se escriben en el log. El secreto de
+los topics sale de `NOTIFICATION_PUSH_TOPIC_SECRET` si existe. iOS necesita además APNs (cuenta de
+Apple Developer).
+
+### KYC del inversionista (función DNI)
+
+Si existe la capa `terraform/functions` (la función serverless de verificación de DNI, en Azure
+Functions), `aks-deploy.sh` lee su URL de Terraform y su clave con `az functionapp keys list` (sin
+imprimirla), y Profile verifica el DNI de cada inversionista al completar su perfil: `VERIFIED`
+si el DNI existe y los nombres coinciden, rechazo con el motivo si no, y revisión manual si la
+función no responde. En la nube la función usa el proveedor `fake` (ver
+`docs/funciones-serverless.md`): para demostrarlo, el DNI `12345678` con «Juan Carlos» / «Pérez
+Gómez» sale verificado y cualquier otro DNI, rechazado. La función tiene que estar encendida
+(`az functionapp start`).
+
 ### Stripe en AKS
 
-El webhook de prueba llega con `stripe listen --forward-to https://vankoo-liquilabs.centralus.cloudapp.azure.com/finance/api/v1/payment-providers/stripe/webhooks`.
-Su `whsec` tiene que ir en `vankoo-secrets` (`STRIPE_WEBHOOK_SECRET`), seguido de
-`kubectl -n vankoo rollout restart deploy/finance-service`. `aks-deploy.sh` lo vuelve a poner
-con el valor del `.env`.
+Stripe avisa de los pagos directamente a AKS: el endpoint de webhook está registrado en la cuenta
+de prueba de Stripe de Vankoo, apuntando a
+`https://<host>/finance/api/v1/payment-providers/stripe/webhooks` (un Ingress aparte que quita el
+prefijo `/finance`) con los eventos `checkout.session.completed`, `…async_payment_succeeded`,
+`…async_payment_failed` y `…expired`. Su secreto de firma va en el `.env` como
+`AKS_STRIPE_WEBHOOK_SECRET`, y `aks-deploy.sh` lo pone en `vankoo-secrets` como
+`STRIPE_WEBHOOK_SECRET` (el `STRIPE_WEBHOOK_SECRET` del `.env` es el de `stripe listen`, solo para
+el compose local). No hace falta ninguna máquina reenviando eventos.
 
 ### Validado en AKS (24 nov 2026)
 
