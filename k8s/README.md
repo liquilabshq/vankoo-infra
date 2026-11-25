@@ -219,7 +219,56 @@ completo por la IP pública con cuentas nuevas:
 Argo CD aplicó solo un commit del overlay, y Prometheus mide la disponibilidad y el p95 del
 API.
 
+## Control de acceso (RBAC)
+
+**Workloads: una ServiceAccount por pod, sin token** (`base/rbac/service-accounts.yaml`).
+Ningún servicio de Vankoo llama a la API de Kubernetes, así que cada Deployment y StatefulSet
+corre con su propia cuenta y `automountServiceAccountToken: false`: un contenedor comprometido
+no encuentra en `/var/run/secrets/kubernetes.io/serviceaccount` credenciales para hablar con el
+clúster. Ninguna de esas cuentas tiene Role. La `default` del namespace también queda sin token,
+para que un pod nuevo que no declare su cuenta no lo reciba.
+
+**Personas: dos Roles en el namespace `vankoo`** (`base/rbac/roles.yaml`).
+
+| Role | Grupo | Puede | No puede |
+|---|---|---|---|
+| `vankoo-viewer` | `vankoo:viewers` | ver pods, logs, Deployments, Services, HPA, Ingress y eventos | leer Secrets; cambiar nada |
+| `vankoo-operator` | `vankoo:operators` | lo del viewer, más `rollout restart`, `scale`, borrar un pod y `port-forward` | leer Secrets, `exec`, crear o borrar Deployments (eso lo hace Argo CD desde Git) |
+
+Hoy nadie pertenece a esos grupos: el clúster todavía usa cuentas locales (ver «Riesgos
+aceptados»). Los Roles quedan listos para enlazarlos a grupos de Entra ID. Se comprueban
+suplantando el grupo:
+
+```bash
+kubectl -n vankoo exec deploy/iam-service -- ls /var/run/secrets/kubernetes.io/serviceaccount  # No such file or directory
+kubectl auth can-i list secrets -n vankoo --as=system:serviceaccount:vankoo:iam-service          # no
+kubectl auth can-i get pods/log -n vankoo --as=demo --as-group=vankoo:viewers                     # yes
+kubectl auth can-i get secrets -n vankoo --as=demo --as-group=vankoo:viewers                      # no
+kubectl auth can-i patch deployments -n vankoo --as=demo --as-group=vankoo:operators              # yes
+kubectl auth can-i create pods/exec -n vankoo --as=demo --as-group=vankoo:operators               # no
+```
+
 ## Riesgos aceptados
+
+### Las personas entran al clúster con cuentas locales, sin Microsoft Entra ID
+
+**Qué se acepta.** El clúster no tiene integrado Entra ID (`azure_active_directory_role_based_access_control`)
+y conserva las cuentas locales. Quien tiene un rol de Azure sobre el grupo de recursos obtiene con
+`az aks get-credentials` un certificado de administrador: los Roles por namespace de
+`base/rbac/roles.yaml` no se le aplican.
+
+**Por qué.** Activar Entra ID en AKS no se puede deshacer, obliga a todo el equipo a usar
+`kubelogin` y cambia cómo entran los scripts `aks-*.sh`. Con el crédito de Azure for Students
+casi agotado, no se arriesga un cambio de acceso irreversible antes de la entrega final.
+
+**Qué lo mitiga.**
+- Solo los integrantes del equipo tienen rol sobre el grupo de recursos.
+- Los cambios al namespace `vankoo` se hacen por Git: Argo CD revierte (`selfHeal`) lo que se cambie a mano.
+- Los pods no tienen token de la API, así que una aplicación comprometida no hereda esos permisos.
+
+**Plan para producción.** Entra ID con Azure RBAC y `local_account_disabled = true`; los roles
+*AKS RBAC Reader* y *Writer* asignados por namespace a grupos de Entra (o los RoleBindings de
+`roles.yaml` apuntando a esos grupos), y *Cluster Admin* solo para quien opera la plataforma.
 
 ### El API server de AKS no limita las IP de origen (Trivy AVD-AZU-0041, CRITICAL)
 
@@ -232,7 +281,7 @@ port-forward) desde redes domésticas con IP dinámicas. Una lista fija los deja
 clúster privado exige una VM de salto y una red virtual que hoy no tenemos.
 
 **Qué lo mitiga.**
-- Para obtener el kubeconfig (`az aks get-credentials`) hace falta un rol de Azure sobre el grupo de recursos.
+- Para obtener el kubeconfig (`az aks get-credentials`) hace falta un rol de Azure sobre el grupo de recursos (ver el riesgo anterior: ese kubeconfig es de administrador).
 - El tráfico va cifrado con TLS.
 - No hay servicios internos expuestos: Argo CD, Grafana y las bases solo se alcanzan por port-forward, y las NetworkPolicies limitan el tráfico entre pods.
 

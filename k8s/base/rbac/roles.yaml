@@ -1,0 +1,95 @@
+# Roles de las personas dentro del namespace vankoo (Kubernetes RBAC).
+#
+# Dos perfiles, de menos a más:
+#   - vankoo-viewer:   ver el estado de la aplicación y sus logs. Sin Secrets.
+#   - vankoo-operator: lo del viewer, más reiniciar y escalar los servicios, borrar
+#                      un pod atascado y hacer port-forward. Sin Secrets ni exec
+#                      (exec permitiría leer las variables de entorno, que traen
+#                      las claves de vankoo-secrets) y sin crear ni borrar
+#                      Deployments: eso lo hace Argo CD desde Git.
+#
+# Se asignan por grupo (vankoo:viewers y vankoo:operators). Hoy nadie pertenece a
+# esos grupos: el clúster todavía usa cuentas locales y quien obtiene el kubeconfig
+# entra como administrador. Cuando se active Microsoft Entra ID, basta con cambiar
+# el nombre del grupo por el object ID del grupo de Entra. Riesgo aceptado y plan:
+# «Riesgos aceptados» en k8s/README.md.
+#
+# Se comprueban sin tener esos grupos, suplantándolos con kubectl:
+#   kubectl auth can-i get secrets -n vankoo --as=demo --as-group=vankoo:viewers   # no
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vankoo-viewer
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, services, endpoints, configmaps, events,
+                persistentvolumeclaims, serviceaccounts]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vankoo-operator
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, services, endpoints, configmaps, events,
+                persistentvolumeclaims, serviceaccounts]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch]
+  # kubectl rollout restart (parche de una anotación) y kubectl scale.
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets]
+    verbs: [patch]
+  - apiGroups: [apps]
+    resources: [deployments/scale, statefulsets/scale]
+    verbs: [get, update, patch]
+  # Borrar un pod atascado: su Deployment o StatefulSet lo vuelve a crear.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [pods/portforward]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vankoo-viewers
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vankoo-viewer
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: vankoo:viewers
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vankoo-operators
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vankoo-operator
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: vankoo:operators
