@@ -2,7 +2,7 @@
 # scripts/aks/aks-deploy.sh o Argo CD (k8s/argocd/). Antes, el script crea en el
 # namespace dos objetos que NO están en Git:
 #   Secret vankoo-secrets    contraseñas de las bases, JWT y claves externas (OCR, Stripe, S3, OpenAI)
-#   ConfigMap vankoo-deploy  valores de este despliegue: URL pública de la web y bucket de los certificados
+#   ConfigMap vankoo-deploy  valores de este despliegue: URL pública de la web, bucket de los certificados y correo (proveedor y remitente)
 #   ConfigMap kyc-demo-ca    CA de demostración del KYC (PARCHE TEMPORAL, ver patches/risk.yaml)
 #
 # Diferencias con el overlay local:
@@ -65,6 +65,7 @@ patches:
   - path: patches/profile-s3.yaml
   - path: patches/invoicing-s3.yaml
   - path: patches/risk.yaml
+  - path: patches/email.yaml
   - path: patches/public-urls.yaml
   - path: patches/volume-permissions.yaml
   - path: patches/risk-db-size.yaml

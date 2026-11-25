@@ -6,7 +6,8 @@
 #     despliegue anterior, porque las bases ya se crearon con ellas) y claves
 #     externas leídas del .env de vankoo-infra (OCR, Stripe, S3, OpenAI), sin
 #     imprimirlas ni dejarlas en disco.
-#   - ConfigMap vankoo-deploy: URL pública (IP del Ingress) y bucket de certificados.
+#   - ConfigMap vankoo-deploy: URL pública (IP del Ingress), bucket de certificados y
+#     correo: Azure Communication Services si existe la capa email, si no Mailpit.
 #   - ConfigMap kyc-demo-ca: CA de demostración del KYC (PARCHE TEMPORAL).
 #
 # Uso: scripts/aks/aks-deploy.sh [--env-file <ruta>] [--restart]
@@ -46,6 +47,19 @@ from_env() {
   printf '%s' "$v"
 }
 
+# Correo: si existe la capa terraform/email (scripts/aks/aks-email.sh), Azure
+# Communication Services; si no, Mailpit dentro del clúster.
+email_provider=smtp
+mail_from="Vankoo <no-reply@vankoo.dev>"
+acs_connection_string=""
+if tf_init email >/dev/null 2>&1 && acs_connection_string="$(tf_output email connection_string 2>/dev/null)" \
+    && [[ -n "$acs_connection_string" ]]; then
+  email_provider=acs
+  mail_from="Vankoo <$(tf_output email sender_address)>"
+else
+  acs_connection_string=""
+fi
+
 secrets="$(mktemp)"; chmod 600 "$secrets"
 trap 'rm -f "$secrets"' EXIT
 iam_db_password="$(keep IAM_DB_PASSWORD)"
@@ -69,6 +83,7 @@ investment_db_password="$(keep INVESTMENT_DB_PASSWORD)"
   # referencian estas claves.
   printf 'MINIO_ROOT_USER=unused\nMINIO_ROOT_PASSWORD=%s\n' "$(keep MINIO_ROOT_PASSWORD)"
   printf 'PUSH_TOPIC_SECRET=%s\n' "$(keep PUSH_TOPIC_SECRET)"
+  [[ -n "$acs_connection_string" ]] && printf 'ACS_CONNECTION_STRING=%s\n' "$acs_connection_string"
   for key in AZURE_OCR_ENDPOINT AZURE_OCR_API_KEY STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET OPENAI_API_KEY \
              AWS_REGION AWS_S3_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
              PROFILE_AWS_REGION PROFILE_AWS_S3_BUCKET PROFILE_AWS_ACCESS_KEY_ID PROFILE_AWS_SECRET_ACCESS_KEY; do
@@ -86,6 +101,8 @@ kubectl -n "$NAMESPACE" create configmap vankoo-deploy \
   --from-literal=WEB_APP_URL="$public_url" \
   --from-literal=PASSWORD_RESET_WEB_URL="$public_url/iam/reset" \
   --from-literal=GREEN_DOCUMENTS_BASE_URL="https://$bucket.s3.$region.amazonaws.com" \
+  --from-literal=EMAIL_PROVIDER="$email_provider" \
+  --from-literal=MAIL_FROM="$mail_from" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
 # PARCHE TEMPORAL (demos): la CA con la que se firman las fichas RUC de prueba.

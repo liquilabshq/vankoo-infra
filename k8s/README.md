@@ -61,6 +61,7 @@ viven dentro del clúster (StatefulSets con discos de Azure), no en las bases ad
 
 ```bash
 scripts/aks/aks-up.sh --yes       # capa terraform/aks (3 nodos) + ingress-nginx con nombre DNS de Azure
+scripts/aks/aks-email.sh --yes    # capa terraform/email: Azure Communication Services (opcional; sin ella, Mailpit)
 scripts/aks/aks-build.sh          # imágenes linux/amd64 en el ACR (ACR Tasks), etiquetas <sha> y «aks»
 scripts/aks/aks-deploy.sh         # Secret y ConfigMaps desde el .env (sin imprimir) + overlay azure
 scripts/aks/aks-platform.sh       # cert-manager (HTTPS), Argo CD y monitoreo (versiones fijadas)
@@ -139,6 +140,17 @@ kubectl -n monitoring port-forward svc/monitoring-grafana 3002:80     # usuario 
 ```
 
 Las contraseñas están en los Secrets `argocd-initial-admin-secret` y `monitoring-grafana`.
+
+### Correo (Azure Communication Services)
+
+La capa `terraform/email` crea Communication Services con un **dominio administrado por Azure**
+(`DoNotReply@….azurecomm.net`, verificado al crearse). Si existe, `aks-deploy.sh` pone
+`EMAIL_PROVIDER=acs` en el ConfigMap `vankoo-deploy`, el remitente en `MAIL_FROM` y la cadena de
+conexión en `vankoo-secrets` (`ACS_CONNECTION_STRING`). Notification (avisos) e IAM
+(recuperación de contraseña) envían entonces por la **API REST de ACS**, firmada con la clave de
+acceso (HMAC). No se usa el SMTP de ACS porque exige registrar una app de Entra, y el tenant de la
+universidad no lo permite. Sin la capa, todo va a Mailpit como en local. El dominio administrado
+tiene límites de envío bajos: sirve para la demo, no para producción.
 
 ### Stripe en AKS
 
