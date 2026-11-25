@@ -1,0 +1,103 @@
+# Controles de seguridad del código, reutilizables por cualquier microservicio.
+#
+# Complementa el escaneo de la imagen del workflow de entrega
+# (deliver-container-app.yml) con dos controles que corren en cada Pull Request,
+# antes de construir nada:
+#
+#   1. Secretos (Gitleaks): revisa solo los commits nuevos (los de la PR o los del
+#      push), así un secreto que ya estaba en el historial no bloquea cada cambio,
+#      pero ninguno nuevo puede entrar. El reporte va redactado: nunca muestra el
+#      valor encontrado.
+#   2. Dependencias y configuración (Trivy, modo filesystem): busca vulnerabilidades
+#      conocidas en los manifiestos (pom.xml, packages.lock.json, pnpm-lock.yaml,
+#      uv.lock…) y configuraciones inseguras en Dockerfiles y Terraform.
+#      Bloquea con CRITICAL; los HIGH se muestran en el log y en el resumen sin
+#      bloquear, para poder corregirlos con un plan en vez de frenar cada entrega.
+#
+# Uso desde el CI del servicio:
+#
+#   security:
+#     uses: liquilabshq/vankoo-infra/.github/workflows/security-checks.yml@develop
+#
+# Este mismo repo lo ejecuta sobre sí mismo en cada PR (job self-check abajo).
+name: Security checks
+
+on:
+  workflow_call:
+    inputs:
+      blocking-severity:
+        description: Severidades que hacen fallar el control de dependencias.
+        required: false
+        type: string
+        default: CRITICAL
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - ".github/workflows/security-checks.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Secrets (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Commit range to scan
+        id: range
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            echo "log-opts=origin/${BASE_REF}..HEAD" >> "$GITHUB_OUTPUT"
+          elif [ -n "$BEFORE" ] && ! [[ "$BEFORE" =~ ^0+$ ]]; then
+            echo "log-opts=${BEFORE}..${AFTER}" >> "$GITHUB_OUTPUT"
+          else
+            echo "log-opts=-1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Scan new commits
+        shell: bash
+        env:
+          LOG_OPTS: ${{ steps.range.outputs.log-opts }}
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.28.0 \
+            git /repo --redact --no-banner --verbose --log-opts="$LOG_OPTS"
+
+  dependencies:
+    name: Dependencies and configuration (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+
+      - name: Report HIGH and CRITICAL findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: "0"
+
+      - name: Block on the configured severity
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig
+          severity: ${{ inputs.blocking-severity || 'CRITICAL' }}
+          format: table
+          exit-code: "1"
+          skip-setup-trivy: true

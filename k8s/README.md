@@ -170,3 +170,23 @@ completo por la IP pública con cuentas nuevas:
 
 Argo CD aplicó solo un commit del overlay, y Prometheus mide la disponibilidad y el p95 del
 API.
+
+## Riesgos aceptados
+
+### El API server de AKS no limita las IP de origen (Trivy AVD-AZU-0041, CRITICAL)
+
+**Qué se acepta.** El clúster `vankoo-aks-…` acepta conexiones a su API server desde cualquier
+IP: no define `api_server_access_profile.authorized_ip_ranges`. La línea `#trivy:ignore:AVD-AZU-0041`
+de `terraform/aks/main.tf` lo excluye **solo para ese recurso**.
+
+**Por qué.** El equipo administra el clúster con `kubectl` (capturas, HPA, Grafana y Argo CD por
+port-forward) desde redes domésticas con IP dinámicas. Una lista fija los dejaría fuera, y un
+clúster privado exige una VM de salto y una red virtual que hoy no tenemos.
+
+**Qué lo mitiga.**
+- Para obtener el kubeconfig (`az aks get-credentials`) hace falta un rol de Azure sobre el grupo de recursos.
+- El tráfico va cifrado con TLS.
+- No hay servicios internos expuestos: Argo CD, Grafana y las bases solo se alcanzan por port-forward, y las NetworkPolicies limitan el tráfico entre pods.
+
+**Plan para producción.** `authorized_ip_ranges` con las IP de una VPN corporativa, o un clúster privado con un bastión, más Microsoft Entra ID con Kubernetes RBAC y sin cuentas locales (`local_account_disabled = true`).
+
