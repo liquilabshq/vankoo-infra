@@ -1,8 +1,13 @@
-# Entrega continua de un microservicio en Azure Container Apps.
+# Entrega continua de un microservicio: imagen en el ACR y, si se pide, despliegue
+# en Azure Container Apps.
 #
 # Workflow reutilizable: cada servicio lo llama desde su propio pipeline cuando
-# su CI ya pasó. Construye la imagen, la publica en el registro (ACR) y la
-# despliega en su Container App del ambiente de desarrollo.
+# su CI ya pasó. Construye la imagen y la publica en el registro (ACR).
+#
+# Desde el 25 nov 2026 Vankoo corre en AKS (k8s/, Argo CD) y las Container Apps
+# están paradas: el despliegue en ACA queda apagado por defecto, porque esperaba
+# una revisión sana que nunca llegaba y dejaba la CI en rojo. Un servicio lo
+# vuelve a activar con `deploy-to-container-apps: true`.
 #
 # Uso desde el repo del servicio:
 #
@@ -66,6 +71,11 @@ on:
         required: false
         type: string
         default: liquilabs-vankoo
+      deploy-to-container-apps:
+        description: Desplegar la imagen en su Container App (apagado desde que Vankoo corre en AKS).
+        required: false
+        type: boolean
+        default: false
     secrets:
       AZURE_CLIENT_ID:
         required: true
@@ -140,6 +150,7 @@ jobs:
   deploy:
     name: Deploy to ${{ inputs.environment }}
     needs: publish
+    if: inputs.deploy-to-container-apps
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     # Un despliegue por app a la vez; el siguiente espera en lugar de cancelar.
