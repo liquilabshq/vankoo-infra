@@ -167,11 +167,25 @@ Apple Developer).
 Si existe la capa `terraform/functions` (la función serverless de verificación de DNI, en Azure
 Functions), `aks-deploy.sh` lee su URL de Terraform y su clave con `az functionapp keys list` (sin
 imprimirla), y Profile verifica el DNI de cada inversionista al completar su perfil: `VERIFIED`
-si el DNI existe y los nombres coinciden, rechazo con el motivo si no, y revisión manual si la
-función no responde. En la nube la función usa el proveedor `fake` (ver
-`docs/funciones-serverless.md`): para demostrarlo, el DNI `12345678` con «Juan Carlos» / «Pérez
-Gómez» sale verificado y cualquier otro DNI, rechazado. La función tiene que estar encendida
-(`az functionapp start`).
+si el DNI existe y los nombres coinciden, rechazo con el motivo si no (`NOT_FOUND`,
+`NAME_MISMATCH`), y revisión manual si la función no responde. La función tiene que estar
+encendida (`az functionapp start`).
+
+**Fuente de datos.** Desde el 25 nov 2026 la función consulta **API Perú** (`dni_provider =
+apiperu`, token en el `.env` como `APIPERU_TOKEN`; ver `docs/funciones-serverless.md`):
+
+```bash
+# desde vankoo-infra; el token se lee del .env sin imprimirlo
+bash -c 'source scripts/aks/lib.sh; export TF_VAR_apiperu_token="$(env_value .env APIPERU_TOKEN)";
+         setup_terraform_env; tf_apply functions -var dni_provider=apiperu'
+```
+
+- **Con datos reales:** solo se verifica un DNI real con el nombre de su titular. Para la demo,
+  usar el DNI de alguien del equipo que lo acepte; no probar números «inventados», que pueden ser
+  de personas reales.
+- **Plan gratuito:** 100 consultas al mes.
+- **Cuidado:** un `azure-deploy.sh` (o un `tf_apply functions`) sin esas variables devuelve la
+  función a `fake`, con los DNIs de demostración (`12345678` = «Juan Carlos» / «Pérez Gómez»).
 
 ### Licencia de Axon Server
 
