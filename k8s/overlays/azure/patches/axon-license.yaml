@@ -2,6 +2,10 @@
 # la licencia (plan Individual, solo desarrollo). scripts/aks/aks-deploy.sh pone el valor
 # <environment-id>:<access-token> del .env en vankoo-secrets. Sin él, Axon corre sin
 # licencia y se apaga a las 12 h (Kubernetes lo levanta; sus datos están en el disco).
+#
+# Con la plataforma, Axon no admite el modo standalone («started in standalone mode, but
+# AxonIQ Console is active … incompatible»): se quita AXONIQ_AXONSERVER_STANDALONE. El nodo
+# ya está inicializado (grupos _admin y default en su disco), así que no lo necesita.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -12,5 +16,7 @@ spec:
       containers:
         - name: axon-server
           env:
+            - name: AXONIQ_AXONSERVER_STANDALONE
+              $patch: delete
             - name: AXONIQ_PLATFORM_AUTHENTICATION
               valueFrom: {secretKeyRef: {name: vankoo-secrets, key: AXONIQ_PLATFORM_AUTHENTICATION, optional: true}}
