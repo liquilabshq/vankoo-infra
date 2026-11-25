@@ -1,16 +1,27 @@
 # Monitoreo propio de Vankoo sobre kube-prometheus-stack (namespace monitoring).
 # Lo aplica scripts/aks/aks-platform.sh después de instalar el chart.
+#   service-monitor.yaml   Prometheus raspa las métricas del API Gateway
+#   rules.yaml             SLI/SLO, burn rate y alertas
+#   *-dashboard.json       dashboards de Grafana
+# La capa de logs y trazas (k8s/monitoring/logs-traces) tiene su propia kustomization.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: monitoring
 resources:
   - service-monitor.yaml
   - rules.yaml
+generatorOptions:
+  disableNameSuffixHash: true
 configMapGenerator:
   - name: vankoo-dashboard
     files:
       - vankoo-dashboard.json
     options:
-      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"
+  - name: vankoo-slo-dashboard
+    files:
+      - vankoo-slo-dashboard.json
+    options:
       labels:
         grafana_dashboard: "1"

@@ -1,0 +1,58 @@
+# Valores extra de kube-prometheus-stack para la capa de logs y trazas. Los añade
+# scripts/aks/aks-platform.sh --logs-traces encima de k8s/monitoring/values.yaml.
+prometheus:
+  prometheusSpec:
+    # El metrics-generator de Tempo escribe aquí, por remote write, las métricas que
+    # calcula de las trazas (traces_spanmetrics_*, traces_service_graph_*).
+    enableRemoteWriteReceiver: true
+
+grafana:
+  # Prometheus y Alertmanager los define el chart (uid prometheus y alertmanager).
+  # Loki y Tempo van enlazados entre sí: de una línea de log con trace_id se abre
+  # la traza, y de un span se abren los logs del mismo servicio en ese momento.
+  # ($$ escapa el $ de las variables de Grafana en el archivo de aprovisionamiento.)
+  additionalDataSources:
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      url: http://loki.monitoring:3100
+      jsonData:
+        maxLines: 1000
+        derivedFields:
+          - name: trace_id
+            matcherType: label
+            matcherRegex: trace_id
+            datasourceUid: tempo
+            url: "$${__value.raw}"
+            urlDisplayLabel: Ver traza
+    - name: Tempo
+      uid: tempo
+      type: tempo
+      access: proxy
+      url: http://tempo.monitoring:3200
+      jsonData:
+        serviceMap:
+          datasourceUid: prometheus
+        nodeGraph:
+          enabled: true
+        tracesToLogsV2:
+          datasourceUid: loki
+          spanStartTimeShift: "-2m"
+          spanEndTimeShift: "2m"
+          filterByTraceID: false
+          filterBySpanID: false
+          customQuery: true
+          query: '{namespace="vankoo", app="$${__span.tags["service.name"]}"}'
+        tracesToMetrics:
+          datasourceUid: prometheus
+          spanStartTimeShift: "-5m"
+          spanEndTimeShift: "5m"
+          tags:
+            - key: service.name
+              value: service
+          queries:
+            - name: Peticiones por segundo
+              query: 'sum(rate(traces_spanmetrics_calls_total{$$__tags}[5m]))'
+            - name: Latencia p95
+              query: 'histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{$$__tags}[5m])))'

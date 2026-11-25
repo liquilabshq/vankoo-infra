@@ -1,0 +1,69 @@
+# Cómo instrumenta el OpenTelemetry Operator a los servicios de Vankoo. Los pods lo
+# usan con la anotación instrumentation.opentelemetry.io/inject-<lenguaje>:
+# "monitoring/vankoo" (k8s/overlays/azure/patches/otel-instrumentation.yaml).
+#
+# Solo trazas: las métricas ya salen del gateway (Prometheus) y de Tempo
+# (span-metrics), y los logs los recoge Alloy de la salida estándar.
+# Muestreo del 100 % (parentbased_always_on): con el tráfico de una demo no pesa y
+# así cualquier petición de la demo tiene su traza.
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: vankoo
+spec:
+  exporter:
+    endpoint: http://tempo.monitoring:4318
+  propagators: [tracecontext, baggage]
+  sampler:
+    type: parentbased_always_on
+  resource:
+    addK8sUIDAttributes: false
+    resourceAttributes:
+      deployment.environment.name: aks
+  env:
+    - name: OTEL_METRICS_EXPORTER
+      value: none
+    - name: OTEL_LOGS_EXPORTER
+      value: none
+  java:
+    env:
+      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+        value: http/protobuf
+      # Spring Boot mete «[trace_id,span_id]» en cada línea de log (el agente rellena
+      # el MDC); Alloy lo extrae y Grafana salta del log a la traza. Va aquí y no en
+      # los manifiestos para que solo exista en los pods que llevan el agente.
+      - name: LOGGING_PATTERN_CORRELATION
+        value: "[%X{trace_id:-},%X{span_id:-}] "
+      # Sin un span raíz por cada vuelta de las tareas @Scheduled (outbox de
+      # Investment, buzón de webhooks de Finance), que se repiten cada pocos segundos.
+      - name: OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED
+        value: "false"
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 64Mi}
+  nodejs:
+    env:
+      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+        value: http/protobuf
+      # fs, dns y net generan cientos de spans por petición sin valor para la demo.
+      - name: OTEL_NODE_DISABLED_INSTRUMENTATIONS
+        value: fs,dns,net
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 128Mi}
+  python:
+    env:
+      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+        value: http/protobuf
+      - name: OTEL_PYTHON_EXCLUDED_URLS
+        value: "health,health/ready"
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 64Mi}
+  dotnet:
+    env:
+      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+        value: http/protobuf
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 128Mi}

@@ -1,0 +1,95 @@
+# Trazas distribuidas (capa k8s/monitoring/logs-traces, NO activada en AKS): el
+# OpenTelemetry Operator inyecta el agente de su lenguaje en cada servicio anotado,
+# con la configuración del recurso Instrumentation monitoring/vankoo
+# (k8s/monitoring/logs-traces/instrumentation.yaml). No cambia la imagen ni el
+# código: un initContainer copia el agente y el operador añade las variables
+# (JAVA_TOOL_OPTIONS, NODE_OPTIONS, PYTHONPATH, CORECLR_*).
+#
+# Este parche está fuera de la lista de patches de kustomization.yaml: activarlo
+# cambia la plantilla de 8 Deployments y Argo CD los reiniciaría todos. Para
+# activarlo, primero aks-platform.sh --logs-traces (instala el operador y el
+# Instrumentation) y luego descomentar su línea en kustomization.yaml. Ver
+# k8s/README.md → Monitoreo.
+#
+# Fuera quedan discovery-server (Eureka, sin peticiones de negocio) y mype-web
+# (nginx con archivos estáticos). Los límites de memoria actuales de los servicios
+# Java (768 Mi a 1 Gi) cubren los ~100 Mi del agente.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "monitoring/vankoo"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iam-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "monitoring/vankoo"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: investment-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "monitoring/vankoo"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: finance-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "monitoring/vankoo"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: invoicing-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-dotnet: "monitoring/vankoo"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: profile-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-nodejs: "monitoring/vankoo"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-nodejs: "monitoring/vankoo"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: risk-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-python: "monitoring/vankoo"

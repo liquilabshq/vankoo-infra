@@ -1,0 +1,126 @@
+# Recolector de logs (chart grafana/alloy, versión fijada en scripts/aks/aks-platform.sh).
+# Un solo pod (Deployment) lee por la API de Kubernetes la salida estándar de los
+# pods de Vankoo y de la plataforma, y la envía a Loki (loki-values.yaml).
+# Se eligió un Deployment y no un DaemonSet: con ~40 pods basta uno y se ahorran
+# dos réplicas en un clúster que va justo de memoria. Tampoco monta /var/log del nodo.
+#
+# Etiquetas de cada línea (las que se usan en LogQL):
+#   namespace, app (app.kubernetes.io/name o el nombre del contenedor), pod,
+#   container y level (error, warn, info, debug), sacado de la propia línea.
+# Metadato estructurado trace_id: los servicios Java lo escriben gracias a
+# LOGGING_PATTERN_CORRELATION (instrumentation.yaml),
+# y Grafana salta de esa línea a la traza en Tempo.
+controller:
+  type: deployment
+  replicas: 1
+
+alloy:
+  # Sin telemetría de uso hacia Grafana Labs.
+  enableReporting: false
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+    limits: {memory: 256Mi}
+  configMap:
+    # El chart pasa este texto por «tpl» de Helm: las plantillas de Alloy
+    # ({{ ... }}) van dentro de {{` ... `}} para que Helm las deje tal cual.
+    content: |
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+
+        // Sin los namespaces del sistema de AKS: mucho volumen y poco valor para Vankoo.
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "kube-system|kube-node-lease|kube-public"
+          action        = "drop"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        // app: la etiqueta app.kubernetes.io/name y, si el pod no la tiene, el contenedor.
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name", "__meta_kubernetes_pod_container_name"]
+          separator     = ";"
+          regex         = "^;?([^;]+).*$"
+          target_label  = "app"
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.process.pods.receiver]
+      }
+
+      loki.process "pods" {
+        // Spring Boot: las trazas de excepción ocupan varias líneas; se juntan con la
+        // línea que empieza con la fecha para que un error sea una sola entrada.
+        stage.match {
+          selector = "{app=~\"api-gateway|iam-service|investment-service|finance-service|discovery-server\"}"
+          stage.multiline {
+            firstline     = "^\\d{4}-\\d{2}-\\d{2}"
+            max_wait_time = "3s"
+          }
+        }
+
+        // Notification (pino) escribe JSON con el nivel numérico: 50 = error, 40 = warn.
+        stage.match {
+          selector = "{app=\"notification-service\"}"
+          stage.json {
+            expressions = { pino_level = "level", trace_id = "trace_id" }
+          }
+          stage.template {
+            source   = "level"
+            template = "{{`{{ if eq .pino_level \"60\" }}fatal{{ else if eq .pino_level \"50\" }}error{{ else if eq .pino_level \"40\" }}warn{{ else if eq .pino_level \"20\" }}debug{{ else if eq .pino_level \"10\" }}trace{{ else }}info{{ end }}`}}"
+          }
+        }
+
+        // Resto de formatos: el primer nivel que aparezca en la línea
+        // (Spring «ERROR», Nest «ERROR [Contexto]», Python «ERROR:», .NET «fail:»).
+        stage.regex {
+          expression = "(?P<raw_level>\\b(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)\\b|^(?:fail|crit|warn|info|dbug|trce):)"
+        }
+        stage.template {
+          source   = "level"
+          template = "{{`{{ if .level }}{{ .level }}{{ else }}{{ $l := ToLower (TrimSuffix .raw_level \":\") }}{{ if or (eq $l \"fail\") (eq $l \"error\") }}error{{ else if or (eq $l \"crit\") (eq $l \"critical\") (eq $l \"fatal\") }}fatal{{ else if or (eq $l \"warn\") (eq $l \"warning\") }}warn{{ else if or (eq $l \"dbug\") (eq $l \"debug\") }}debug{{ else if or (eq $l \"trce\") (eq $l \"trace\") }}trace{{ else if eq $l \"info\" }}info{{ else }}unknown{{ end }}{{ end }}`}}"
+        }
+
+        // trace_id de los servicios Java: «[<trace_id 32 hex>,<span_id 16 hex>]».
+        stage.regex {
+          expression = "\\[(?P<java_trace_id>[0-9a-f]{32}),[0-9a-f]{16}\\]"
+        }
+        stage.template {
+          source   = "trace_id"
+          template = "{{`{{ if .trace_id }}{{ .trace_id }}{{ else }}{{ .java_trace_id }}{{ end }}`}}"
+        }
+
+        stage.labels {
+          values = { level = "" }
+        }
+        stage.structured_metadata {
+          values = { trace_id = "" }
+        }
+
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.monitoring:3100/loki/api/v1/push"
+        }
+      }
+
+# Prometheus recoge las métricas de Alloy (para la alerta VankooLogPipelineDown).
+serviceMonitor:
+  enabled: true

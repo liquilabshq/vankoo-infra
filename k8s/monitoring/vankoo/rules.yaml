@@ -1,54 +1,303 @@
-# SLO de Vankoo y alertas. Los SLI salen del API Gateway (http.server.requests) y
-# del estado de los pods (kube-state-metrics).
+# SLO de Vankoo y alertas (PrometheusRule). Las aplica scripts/aks/aks-platform.sh y
+# las evalúa Prometheus cada 30 s; las fichas de respuesta están en
+# k8s/monitoring/RUNBOOK.md. Solo usan métricas que ya existen en AKS (API Gateway y
+# kube-state-metrics). La latencia p95 por flujo y las alertas de logs y trazas están
+# en k8s/monitoring/logs-traces/, que no está activada en AKS (ver k8s/README.md).
 #
-# SLO (ventana de 30 días):
-#   - Disponibilidad: el 99 % de las peticiones al API no termina en 5xx.
-#   - Latencia: el p95 de las peticiones al API, por debajo de 1 s.
-# Las alertas de «quema rápida» avisan si el error supera 14,4 veces el
-# presupuesto (1 %) durante 5 minutos, es decir, si a ese ritmo se gastaría en
-# unas 2 horas el presupuesto de todo el mes.
+# Los objetivos de cada flujo viven en una sola serie (vankoo:journey_slo_objective y
+# vankoo:journey_latency_objective_seconds): alertas y dashboards los leen de ahí, así
+# que cambiar un objetivo es cambiar una línea.
+#
+# SLI (de dónde sale cada medición):
+#   - API completo: http.server.requests del API Gateway, sin /actuator (las sondas
+#     y el raspado de Prometheus no son tráfico de usuarios).
+#   - Disponibilidad por flujo: spring.cloud.gateway.requests del gateway, que trae
+#     la ruta (routeId) y el código HTTP de cada petición que reenvía.
+#   - Latencia media por flujo: la misma métrica (suma / cuenta). El gateway no publica
+#     histograma por ruta, así que el p95 por flujo sale de las trazas (* en la tabla,
+#     capa logs-traces).
+#   Una petición «mala» es la que termina en 5xx. Los 4xx (token vencido, datos
+#   inválidos) son errores del cliente y no gastan presupuesto.
+#
+# SLO (ventana objetivo de 30 días):
+#   | Flujo (journey)                  | Ruta del gateway (routeId)    | Disponibilidad | Latencia p95 |
+#   | API completo (api)               | todas                         | 99 %           | < 1 s        |
+#   | Inicio de sesión (login)         | iam-auth-public               | 99,5 %         | < 0,5 s *    |
+#   | Carga de factura (factura)       | invoicing-invoices-protected  | 99 %           | < 3 s *      |
+#   | Inversión en subasta (inversion) | investment-auctions-protected | 99 %           | < 1,5 s *    |
+#   | Recarga de saldo (recarga)       | finance-investor-protected    | 99 %           | < 2 s *      |
+#
+# Prometheus solo guarda 2 días (sin disco persistente, ver values.yaml): el
+# presupuesto de error «restante» se calcula sobre esa ventana (rate2d) y no sobre
+# los 30 días del objetivo. Es una limitación conocida del clúster de la demo.
+#
+# Alertas de presupuesto con «burn rate» multiventana (Google SRE Workbook, cap. 5):
+#   - Quema rápida (crítica): el error supera 14,4 veces el presupuesto en la última
+#     hora Y en los últimos 5 minutos. A ese ritmo se gastaría el 2 % del presupuesto
+#     mensual en 1 h (todo en ~2 días). La ventana corta hace que la alerta se apague
+#     sola en cuanto el problema se corrige.
+#   - Quema lenta (warning): 6 veces en 6 h y en 30 min (5 % del presupuesto en 6 h).
+#   Para no alertar por una sola petición fallida en un clúster casi sin tráfico, se
+#   exige un mínimo de peticiones en la ventana larga.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: vankoo
 spec:
   groups:
-    - name: vankoo-slo
+    - name: vankoo-slo-api
       rules:
+        # Nombres que ya usa el dashboard «Vankoo · Visión general».
         - record: vankoo:gateway_requests:rate5m
-          expr: sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway"}[5m]))
+          expr: sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*"}[5m]))
         - record: vankoo:gateway_errors:rate5m
           # «or vector(0)»: sin ningún 5xx la suma no tendría series y la
           # disponibilidad saldría vacía en vez de 100 %.
-          expr: sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", status=~"5.."}[5m])) or vector(0)
+          expr: sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*", status=~"5.."}[5m])) or vector(0)
         - record: vankoo:gateway_availability:ratio5m
           expr: 1 - (vankoo:gateway_errors:rate5m / clamp_min(vankoo:gateway_requests:rate5m, 1e-9))
         - record: vankoo:gateway_latency_p95:5m
-          expr: histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{namespace="vankoo", job="api-gateway"}[5m])))
+          expr: histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{namespace="vankoo", job="api-gateway", uri!~"/actuator.*"}[5m])))
+        - record: vankoo:gateway_error_ratio:rate5m
+          expr: vankoo:gateway_errors:rate5m / clamp_min(vankoo:gateway_requests:rate5m, 1e-9)
+        - record: vankoo:gateway_error_ratio:rate30m
+          expr: (sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*", status=~"5.."}[30m])) or vector(0)) / clamp_min(sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*"}[30m])), 1e-9)
+        - record: vankoo:gateway_error_ratio:rate1h
+          expr: (sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*", status=~"5.."}[1h])) or vector(0)) / clamp_min(sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*"}[1h])), 1e-9)
+        - record: vankoo:gateway_error_ratio:rate6h
+          expr: (sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*", status=~"5.."}[6h])) or vector(0)) / clamp_min(sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*"}[6h])), 1e-9)
+        - record: vankoo:gateway_error_ratio:rate2d
+          expr: (sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*", status=~"5.."}[2d])) or vector(0)) / clamp_min(sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*"}[2d])), 1e-9)
         - alert: VankooApiErrorBudgetFastBurn
-          expr: (vankoo:gateway_errors:rate5m / clamp_min(vankoo:gateway_requests:rate5m, 1e-9)) > (14.4 * 0.01) and vankoo:gateway_requests:rate5m > 0.05
-          for: 5m
-          labels: {severity: critical, slo: disponibilidad}
+          expr: |
+            vankoo:gateway_error_ratio:rate1h > (14.4 * 0.01)
+            and vankoo:gateway_error_ratio:rate5m > (14.4 * 0.01)
+            and sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*"}[1h])) > 0.01
+          for: 2m
+          labels: {severity: critical, slo: disponibilidad, journey: api}
           annotations:
-            summary: "El API devuelve demasiados 5xx: se está gastando el presupuesto de errores del SLO"
+            summary: "El API devuelve demasiados 5xx: a este ritmo se gasta el presupuesto de errores del mes en ~2 días"
+            description: "{{ $value | humanizePercentage }} de las peticiones de la última hora terminaron en 5xx (SLO: 99 % sin 5xx)."
+            runbook: "k8s/monitoring/RUNBOOK.md#api-con-errores-5xx"
+        - alert: VankooApiErrorBudgetSlowBurn
+          expr: |
+            vankoo:gateway_error_ratio:rate6h > (6 * 0.01)
+            and vankoo:gateway_error_ratio:rate30m > (6 * 0.01)
+            and sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", uri!~"/actuator.*"}[6h])) > 0.01
+          for: 15m
+          labels: {severity: warning, slo: disponibilidad, journey: api}
+          annotations:
+            summary: "El API acumula 5xx: se está gastando el presupuesto de errores más rápido de lo sostenible"
+            description: "{{ $value | humanizePercentage }} de las peticiones de las últimas 6 h terminaron en 5xx."
             runbook: "k8s/monitoring/RUNBOOK.md#api-con-errores-5xx"
         - alert: VankooApiLatencyHigh
           expr: vankoo:gateway_latency_p95:5m > 1
           for: 10m
-          labels: {severity: warning, slo: latencia}
+          labels: {severity: warning, slo: latencia, journey: api}
           annotations:
             summary: "El p95 de la latencia del API supera 1 s"
+            description: "p95 actual: {{ $value | humanizeDuration }}."
             runbook: "k8s/monitoring/RUNBOOK.md#api-lenta"
+    - name: vankoo-slo-journeys
+      rules:
+        # Inicio de sesión: iam-auth-public → iam-service
+        - record: vankoo:journey_slo_objective
+          expr: vector(0.995)
+          labels: {journey: login}
+        - record: vankoo:journey_latency_objective_seconds
+          expr: vector(0.5)
+          labels: {journey: login}
+        - record: vankoo:journey_requests:rate5m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public"}[5m])) or vector(0)
+          labels: {journey: login}
+        - record: vankoo:journey_error_ratio:rate5m
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public", httpStatusCode=~"5.."}[5m])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public"}[5m])), 1e-9)
+          labels: {journey: login}
+        - record: vankoo:journey_requests:rate30m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public"}[30m])) or vector(0)
+          labels: {journey: login}
+        - record: vankoo:journey_error_ratio:rate30m
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public", httpStatusCode=~"5.."}[30m])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public"}[30m])), 1e-9)
+          labels: {journey: login}
+        - record: vankoo:journey_requests:rate1h
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public"}[1h])) or vector(0)
+          labels: {journey: login}
+        - record: vankoo:journey_error_ratio:rate1h
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public", httpStatusCode=~"5.."}[1h])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public"}[1h])), 1e-9)
+          labels: {journey: login}
+        - record: vankoo:journey_requests:rate6h
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public"}[6h])) or vector(0)
+          labels: {journey: login}
+        - record: vankoo:journey_error_ratio:rate6h
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public", httpStatusCode=~"5.."}[6h])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public"}[6h])), 1e-9)
+          labels: {journey: login}
+        - record: vankoo:journey_requests:rate2d
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public"}[2d])) or vector(0)
+          labels: {journey: login}
+        - record: vankoo:journey_error_ratio:rate2d
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public", httpStatusCode=~"5.."}[2d])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public"}[2d])), 1e-9)
+          labels: {journey: login}
+        - record: vankoo:journey_latency_avg:5m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_sum{namespace="vankoo", routeId="iam-auth-public"}[5m])) / sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="iam-auth-public"}[5m]))
+          labels: {journey: login}
+        # Carga de factura: invoicing-invoices-protected → invoicing-service
+        - record: vankoo:journey_slo_objective
+          expr: vector(0.99)
+          labels: {journey: factura}
+        - record: vankoo:journey_latency_objective_seconds
+          expr: vector(3)
+          labels: {journey: factura}
+        - record: vankoo:journey_requests:rate5m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected"}[5m])) or vector(0)
+          labels: {journey: factura}
+        - record: vankoo:journey_error_ratio:rate5m
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected", httpStatusCode=~"5.."}[5m])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected"}[5m])), 1e-9)
+          labels: {journey: factura}
+        - record: vankoo:journey_requests:rate30m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected"}[30m])) or vector(0)
+          labels: {journey: factura}
+        - record: vankoo:journey_error_ratio:rate30m
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected", httpStatusCode=~"5.."}[30m])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected"}[30m])), 1e-9)
+          labels: {journey: factura}
+        - record: vankoo:journey_requests:rate1h
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected"}[1h])) or vector(0)
+          labels: {journey: factura}
+        - record: vankoo:journey_error_ratio:rate1h
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected", httpStatusCode=~"5.."}[1h])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected"}[1h])), 1e-9)
+          labels: {journey: factura}
+        - record: vankoo:journey_requests:rate6h
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected"}[6h])) or vector(0)
+          labels: {journey: factura}
+        - record: vankoo:journey_error_ratio:rate6h
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected", httpStatusCode=~"5.."}[6h])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected"}[6h])), 1e-9)
+          labels: {journey: factura}
+        - record: vankoo:journey_requests:rate2d
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected"}[2d])) or vector(0)
+          labels: {journey: factura}
+        - record: vankoo:journey_error_ratio:rate2d
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected", httpStatusCode=~"5.."}[2d])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected"}[2d])), 1e-9)
+          labels: {journey: factura}
+        - record: vankoo:journey_latency_avg:5m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_sum{namespace="vankoo", routeId="invoicing-invoices-protected"}[5m])) / sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="invoicing-invoices-protected"}[5m]))
+          labels: {journey: factura}
+        # Inversión en subasta: investment-auctions-protected → investment-service
+        - record: vankoo:journey_slo_objective
+          expr: vector(0.99)
+          labels: {journey: inversion}
+        - record: vankoo:journey_latency_objective_seconds
+          expr: vector(1.5)
+          labels: {journey: inversion}
+        - record: vankoo:journey_requests:rate5m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected"}[5m])) or vector(0)
+          labels: {journey: inversion}
+        - record: vankoo:journey_error_ratio:rate5m
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected", httpStatusCode=~"5.."}[5m])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected"}[5m])), 1e-9)
+          labels: {journey: inversion}
+        - record: vankoo:journey_requests:rate30m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected"}[30m])) or vector(0)
+          labels: {journey: inversion}
+        - record: vankoo:journey_error_ratio:rate30m
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected", httpStatusCode=~"5.."}[30m])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected"}[30m])), 1e-9)
+          labels: {journey: inversion}
+        - record: vankoo:journey_requests:rate1h
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected"}[1h])) or vector(0)
+          labels: {journey: inversion}
+        - record: vankoo:journey_error_ratio:rate1h
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected", httpStatusCode=~"5.."}[1h])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected"}[1h])), 1e-9)
+          labels: {journey: inversion}
+        - record: vankoo:journey_requests:rate6h
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected"}[6h])) or vector(0)
+          labels: {journey: inversion}
+        - record: vankoo:journey_error_ratio:rate6h
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected", httpStatusCode=~"5.."}[6h])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected"}[6h])), 1e-9)
+          labels: {journey: inversion}
+        - record: vankoo:journey_requests:rate2d
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected"}[2d])) or vector(0)
+          labels: {journey: inversion}
+        - record: vankoo:journey_error_ratio:rate2d
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected", httpStatusCode=~"5.."}[2d])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected"}[2d])), 1e-9)
+          labels: {journey: inversion}
+        - record: vankoo:journey_latency_avg:5m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_sum{namespace="vankoo", routeId="investment-auctions-protected"}[5m])) / sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="investment-auctions-protected"}[5m]))
+          labels: {journey: inversion}
+        # Recarga de saldo: finance-investor-protected → finance-service
+        - record: vankoo:journey_slo_objective
+          expr: vector(0.99)
+          labels: {journey: recarga}
+        - record: vankoo:journey_latency_objective_seconds
+          expr: vector(2)
+          labels: {journey: recarga}
+        - record: vankoo:journey_requests:rate5m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected"}[5m])) or vector(0)
+          labels: {journey: recarga}
+        - record: vankoo:journey_error_ratio:rate5m
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected", httpStatusCode=~"5.."}[5m])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected"}[5m])), 1e-9)
+          labels: {journey: recarga}
+        - record: vankoo:journey_requests:rate30m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected"}[30m])) or vector(0)
+          labels: {journey: recarga}
+        - record: vankoo:journey_error_ratio:rate30m
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected", httpStatusCode=~"5.."}[30m])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected"}[30m])), 1e-9)
+          labels: {journey: recarga}
+        - record: vankoo:journey_requests:rate1h
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected"}[1h])) or vector(0)
+          labels: {journey: recarga}
+        - record: vankoo:journey_error_ratio:rate1h
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected", httpStatusCode=~"5.."}[1h])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected"}[1h])), 1e-9)
+          labels: {journey: recarga}
+        - record: vankoo:journey_requests:rate6h
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected"}[6h])) or vector(0)
+          labels: {journey: recarga}
+        - record: vankoo:journey_error_ratio:rate6h
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected", httpStatusCode=~"5.."}[6h])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected"}[6h])), 1e-9)
+          labels: {journey: recarga}
+        - record: vankoo:journey_requests:rate2d
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected"}[2d])) or vector(0)
+          labels: {journey: recarga}
+        - record: vankoo:journey_error_ratio:rate2d
+          expr: (sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected", httpStatusCode=~"5.."}[2d])) or vector(0)) / clamp_min(sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected"}[2d])), 1e-9)
+          labels: {journey: recarga}
+        - record: vankoo:journey_latency_avg:5m
+          expr: sum(rate(spring_cloud_gateway_requests_seconds_sum{namespace="vankoo", routeId="finance-investor-protected"}[5m])) / sum(rate(spring_cloud_gateway_requests_seconds_count{namespace="vankoo", routeId="finance-investor-protected"}[5m]))
+          labels: {journey: recarga}
+        - record: vankoo:journey_availability:ratio5m
+          expr: 1 - vankoo:journey_error_ratio:rate5m
+        # Presupuesto que queda en la ventana que guarda Prometheus (2 días):
+        # 1 = intacto, 0 = gastado, negativo = SLO incumplido.
+        - record: vankoo:journey_error_budget_remaining:ratio2d
+          expr: 1 - (vankoo:journey_error_ratio:rate2d / on (journey) (1 - vankoo:journey_slo_objective))
+        - alert: VankooJourneyErrorBudgetFastBurn
+          expr: |
+            vankoo:journey_error_ratio:rate1h > on (journey) (14.4 * (1 - vankoo:journey_slo_objective))
+            and on (journey) vankoo:journey_error_ratio:rate5m > on (journey) (14.4 * (1 - vankoo:journey_slo_objective))
+            and on (journey) vankoo:journey_requests:rate1h > 0.005
+          for: 2m
+          labels: {severity: critical, slo: disponibilidad}
+          annotations:
+            summary: "Flujo «{{ $labels.journey }}»: demasiados 5xx, se quema el presupuesto de errores 14,4 veces más rápido de lo permitido"
+            description: "{{ $value | humanizePercentage }} de las peticiones de la última hora fallaron con 5xx."
+            runbook: "k8s/monitoring/RUNBOOK.md#flujo-con-errores-5xx"
+        - alert: VankooJourneyErrorBudgetSlowBurn
+          expr: |
+            vankoo:journey_error_ratio:rate6h > on (journey) (6 * (1 - vankoo:journey_slo_objective))
+            and on (journey) vankoo:journey_error_ratio:rate30m > on (journey) (6 * (1 - vankoo:journey_slo_objective))
+            and on (journey) vankoo:journey_requests:rate6h > 0.005
+          for: 15m
+          labels: {severity: warning, slo: disponibilidad}
+          annotations:
+            summary: "Flujo «{{ $labels.journey }}»: acumula 5xx por encima de lo sostenible"
+            description: "{{ $value | humanizePercentage }} de las peticiones de las últimas 6 h fallaron con 5xx."
+            runbook: "k8s/monitoring/RUNBOOK.md#flujo-con-errores-5xx"
     - name: vankoo-workloads
       rules:
         - alert: VankooPodRestarting
-          expr: increase(kube_pod_container_status_restarts_total{namespace="vankoo"}[15m]) > 2
+          expr: label_replace(increase(kube_pod_container_status_restarts_total{namespace="vankoo"}[15m]) > 2, "app", "$1", "container", "(.*)")
           labels: {severity: warning}
           annotations:
             summary: "{{ $labels.pod }} se reinició más de 2 veces en 15 minutos"
             runbook: "k8s/monitoring/RUNBOOK.md#pod-que-se-reinicia"
         - alert: VankooDeploymentUnavailable
-          expr: kube_deployment_status_replicas_available{namespace="vankoo"} < 1
+          expr: label_replace(kube_deployment_status_replicas_available{namespace="vankoo"} < 1, "app", "$1", "deployment", "(.*)")
           for: 5m
           labels: {severity: critical}
           annotations:
