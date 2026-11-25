@@ -14,7 +14,7 @@ k8s/
 │   ├── local/            # clúster local (kind): Secret con valores de desarrollo
 │   └── azure/            # Azure Kubernetes Service (capa terraform/aks)
 ├── argocd/               # Argo CD: valores del chart y la aplicación «vankoo» (GitOps)
-└── monitoring/           # kube-prometheus-stack, SLO, alertas, dashboard y runbook
+└── monitoring/           # métricas, logs y trazas: SLO, alertas, dashboards y runbook
 ```
 
 ## Decisiones
@@ -123,23 +123,52 @@ hacer push, mirar el estado y revertir.
 
 ### Monitoreo (`monitoring/`)
 
-- **Herramientas:** Prometheus, Alertmanager, Grafana, node-exporter y kube-state-metrics, en
-  versión ligera (sin discos, retención de 2 días).
-- **SLI:** salen del API Gateway, que todas las peticiones cruzan (`/actuator/prometheus`).
-- **SLO:** 99 % de peticiones sin 5xx, y p95 por debajo de 1 s.
-- **Alertas:** consumo rápido del presupuesto de errores, latencia, pods que se reinician,
-  servicios sin réplicas, bases o brokers caídos y nodos sin memoria. Cada alerta enlaza a su
-  entrada de `monitoring/RUNBOOK.md`.
-- **Dashboard:** «Vankoo · Visión general».
+Todo vive en el namespace `monitoring`, lo instala `scripts/aks/aks-platform.sh` y va en
+versión ligera: sin discos (cada nodo admite solo 4 y las bases ya los usan), así que cada
+herramienta guarda 2 días o menos y pierde el historial si su pod se reinicia.
 
-Acceso sin exponerlos a internet:
-
-```bash
-kubectl -n argocd port-forward svc/argocd-server 8081:80              # usuario admin
-kubectl -n monitoring port-forward svc/monitoring-grafana 3002:80     # usuario admin
+```
+pods de vankoo ──stdout──────────────► Alloy ──► Loki (logs, 48 h) ─────┐
+pods de vankoo ──OTLP (agente)───────► Tempo (trazas, 48 h) ────────────┼──► Grafana
+                 Tempo metrics-generator ──remote write──► Prometheus ──┘    https://<host>/grafana
+api-gateway ◄──/actuator/prometheus── Prometheus (métricas, 2 d) ──► Alertmanager ◄── ruler de Loki
 ```
 
-Las contraseñas están en los Secrets `argocd-initial-admin-secret` y `monitoring-grafana`.
+| Señal | Herramienta | Qué cubre |
+| --- | --- | --- |
+| Métricas | Prometheus + kube-state-metrics + node-exporter | Tráfico, errores y latencia del gateway por ruta; estado de pods, nodos y bases |
+| Logs | Loki + Alloy (`loki-values.yaml`, `alloy-values.yaml`) | La salida estándar de **todos** los pods, con `app`, `level` y, en Java, `trace_id` |
+| Trazas | Tempo + OpenTelemetry Operator (`tempo-values.yaml`, `otel-operator-values.yaml`) | Recorrido de cada petición por gateway, IAM, Investment, Finance, Invoicing, Profile, Notification y Risk |
+
+- **Trazas sin tocar el código:** el operador inyecta el agente de OpenTelemetry de cada lenguaje en
+  los pods anotados (`overlays/azure/patches/otel-instrumentation.yaml`, configuración en
+  `monitoring/vankoo/instrumentation.yaml`). Tempo además calcula de las trazas las métricas RED por
+  servicio y endpoint (`traces_spanmetrics_*`) y el mapa de servicios (`traces_service_graph_*`).
+- **SLI y SLO** (`monitoring/vankoo/rules.yaml`): el API completo (99 % sin 5xx, p95 < 1 s) y cuatro
+  flujos de negocio, medidos en la ruta del gateway (disponibilidad) y en las trazas del servicio
+  (latencia): inicio de sesión (99,5 %, < 0,5 s), carga de factura (99 %, < 3 s), inversión en
+  subasta (99 %, < 1,5 s) y recarga de saldo (99 %, < 2 s).
+- **Alertas:** consumo del presupuesto de errores con *burn rate* multiventana (rápido y lento),
+  latencia por flujo, pods que se reinician, servicios sin réplicas, bases o brokers caídos, nodos
+  sin memoria, ráfagas de errores en los logs (`monitoring/vankoo/loki-rules.yaml`) y la propia
+  canalización de logs y trazas. Se ven en Grafana (*Alerting*) y en Alertmanager, sin canal externo.
+  Cada alerta enlaza a su ficha de `monitoring/RUNBOOK.md`.
+- **Dashboards:** «Vankoo · Visión general», «Vankoo · SLO y presupuesto de error», «Vankoo · Logs» y
+  «Vankoo · Trazas». Cada panel explica en su descripción (icono ⓘ) cómo leerlo.
+
+Acceso:
+
+- **Grafana:** `https://vankoo-liquilabs.centralus.cloudapp.azure.com/grafana`, usuario `admin`. La
+  contraseña es `GRAFANA_ADMIN_PASSWORD` del `.env` o, si no está, la del Secret `grafana-admin`.
+- **Argo CD, Prometheus y Alertmanager**, sin exponer a internet:
+
+```bash
+kubectl -n argocd port-forward svc/argocd-server 8081:80                              # usuario admin
+kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 9090
+kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-alertmanager 9093
+```
+
+La contraseña de Argo CD está en el Secret `argocd-initial-admin-secret`.
 
 ### Correo (Azure Communication Services)
 
@@ -280,14 +309,14 @@ casi agotado, no se arriesga un cambio de acceso irreversible antes de la entreg
 IP: no define `api_server_access_profile.authorized_ip_ranges`. La línea `#trivy:ignore:AVD-AZU-0041`
 de `terraform/aks/main.tf` lo excluye **solo para ese recurso**.
 
-**Por qué.** El equipo administra el clúster con `kubectl` (capturas, HPA, Grafana y Argo CD por
+**Por qué.** El equipo administra el clúster con `kubectl` (capturas, HPA, Argo CD y Prometheus por
 port-forward) desde redes domésticas con IP dinámicas. Una lista fija los dejaría fuera, y un
 clúster privado exige una VM de salto y una red virtual que hoy no tenemos.
 
 **Qué lo mitiga.**
 - Para obtener el kubeconfig (`az aks get-credentials`) hace falta un rol de Azure sobre el grupo de recursos (ver el riesgo anterior: ese kubeconfig es de administrador).
 - El tráfico va cifrado con TLS.
-- No hay servicios internos expuestos: Argo CD, Grafana y las bases solo se alcanzan por port-forward, y las NetworkPolicies limitan el tráfico entre pods.
+- No hay servicios internos expuestos: Argo CD, Prometheus, Alertmanager y las bases solo se alcanzan por port-forward, y las NetworkPolicies limitan el tráfico entre pods. Grafana sí es pública (para la demo y la evaluación), pero por HTTPS, sin acceso anónimo ni registro de usuarios, y con la contraseña de admin fuera de Git.
 
 **Plan para producción.** `authorized_ip_ranges` con las IP de una VPN corporativa, o un clúster privado con un bastión, más Microsoft Entra ID con Kubernetes RBAC y sin cuentas locales (`local_account_disabled = true`).
 
