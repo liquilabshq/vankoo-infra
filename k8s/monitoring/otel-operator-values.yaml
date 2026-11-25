@@ -1,0 +1,22 @@
+# OpenTelemetry Operator (chart open-telemetry/opentelemetry-operator, versión fijada
+# en scripts/aks/aks-platform.sh). Su webhook inyecta el agente de OpenTelemetry en
+# los pods anotados con instrumentation.opentelemetry.io/inject-<lenguaje>
+# (k8s/overlays/azure/patches/otel-instrumentation.yaml), según el recurso
+# Instrumentation «vankoo» (k8s/monitoring/vankoo/instrumentation.yaml). Así los
+# servicios mandan trazas a Tempo sin cambiar su código ni su imagen.
+#
+# El certificado del webhook lo emite el cert-manager que ya está en el clúster.
+# Si el operador está caído, los pods arrancan igual, solo que sin agente
+# (admissionWebhooks.pods.failurePolicy: Ignore, valor por defecto del chart).
+manager:
+  # El operador también puede crear colectores; aquí no se usa ninguno (los agentes
+  # envían directo a Tempo), pero el chart exige la imagen.
+  collectorImage:
+    repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-k8s
+  resources:
+    requests: {cpu: 10m, memory: 64Mi}
+    limits: {memory: 192Mi}
+
+admissionWebhooks:
+  certManager:
+    enabled: true

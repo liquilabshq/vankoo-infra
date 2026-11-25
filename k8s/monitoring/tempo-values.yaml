@@ -1,0 +1,70 @@
+# Trazas distribuidas (chart grafana/tempo, monolítico; versión fijada en
+# scripts/aks/aks-platform.sh). Grafana marca este chart como obsoleto en favor de
+# tempo-distributed, pero un solo proceso es lo único que cabe en este clúster. Recibe por OTLP los spans que mandan los agentes de
+# OpenTelemetry inyectados en los servicios (vankoo/instrumentation.yaml) y Grafana
+# los consulta con TraceQL.
+#   - Almacenamiento local en el disco del pod (emptyDir), retención de 48 h: no
+#     quedan discos libres en los nodos. Si el pod se reinicia, se pierden las trazas.
+#   - metrics-generator: a partir de los spans calcula
+#       · traces_spanmetrics_*   peticiones, errores y latencia por servicio y endpoint
+#                                (los SLI de latencia por flujo, vankoo/rules.yaml);
+#       · traces_service_graph_* el mapa de servicios (quién llama a quién);
+#     y los escribe en Prometheus por remote write.
+tempo:
+  # Sin telemetría de uso hacia Grafana Labs.
+  reportingEnabled: false
+  # El ballast reservaba 1 GB de memoria virtual; en un clúster tan justo, mejor nada.
+  memBallastSizeMbs: 0
+  retention: 48h
+  extraVolumeMounts:
+    - name: tempo-data
+      mountPath: /var/tempo
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {memory: 768Mi}
+  # Los agentes usan OTLP. Los receptores de Jaeger quedan porque el Service del
+  # chart los exige, pero nadie los usa.
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+  metricsGenerator:
+    enabled: true
+    remoteWriteUrl: "http://monitoring-kube-prometheus-prometheus.monitoring:9090/api/v1/write"
+    registry:
+      external_labels:
+        source: tempo
+    processor:
+      service_graphs:
+        dimensions: [http.method]
+      span_metrics:
+        # http.route (p. ej. «/api/v1/authentication/sign-in») permite separar los
+        # flujos de negocio dentro de un mismo servicio.
+        dimensions: [http.method, http.route, http.response.status_code]
+        histogram_buckets: [0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 3, 5, 10]
+  overrides:
+    defaults:
+      metrics_generator:
+        processors: [service-graphs, span-metrics]
+
+persistence:
+  enabled: false
+
+extraVolumes:
+  - name: tempo-data
+    emptyDir:
+      sizeLimit: 4Gi
+
+# Prometheus recoge las métricas propias de Tempo (spans recibidos, errores).
+serviceMonitor:
+  enabled: true

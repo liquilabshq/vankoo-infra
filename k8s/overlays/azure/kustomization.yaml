@@ -72,6 +72,7 @@ patches:
   - path: patches/public-urls.yaml
   - path: patches/volume-permissions.yaml
   - path: patches/risk-db-size.yaml
+  - path: patches/otel-instrumentation.yaml
   - path: patches/ingress.yaml
     target:
       kind: Ingress

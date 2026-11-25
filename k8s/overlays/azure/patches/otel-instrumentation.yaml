@@ -1,0 +1,115 @@
+# Trazas distribuidas: el OpenTelemetry Operator (k8s/monitoring/otel-operator-values.yaml)
+# inyecta el agente de su lenguaje en cada servicio anotado, con la configuración del
+# recurso Instrumentation monitoring/vankoo (k8s/monitoring/vankoo/instrumentation.yaml).
+# No cambia la imagen ni el código: un initContainer copia el agente y el operador
+# añade las variables (JAVA_TOOL_OPTIONS, NODE_OPTIONS, PYTHONPATH, CORECLR_*).
+#
+# Fuera quedan discovery-server (Eureka, sin peticiones de negocio) y mype-web
+# (nginx con archivos estáticos).
+#
+# En los servicios Java, LOGGING_PATTERN_CORRELATION mete «[trace_id,span_id]» en cada
+# línea de log (el agente rellena el MDC); Alloy lo extrae y Grafana salta del log a
+# la traza. Los límites de memoria actuales (768 Mi a 1 Gi) ya cubren los ~100 Mi del agente.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "monitoring/vankoo"
+    spec:
+      containers:
+        - name: api-gateway
+          env:
+            - name: LOGGING_PATTERN_CORRELATION
+              value: "[%X{trace_id:-},%X{span_id:-}] "
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iam-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "monitoring/vankoo"
+    spec:
+      containers:
+        - name: iam-service
+          env:
+            - name: LOGGING_PATTERN_CORRELATION
+              value: "[%X{trace_id:-},%X{span_id:-}] "
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: investment-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "monitoring/vankoo"
+    spec:
+      containers:
+        - name: investment-service
+          env:
+            - name: LOGGING_PATTERN_CORRELATION
+              value: "[%X{trace_id:-},%X{span_id:-}] "
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: finance-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "monitoring/vankoo"
+    spec:
+      containers:
+        - name: finance-service
+          env:
+            - name: LOGGING_PATTERN_CORRELATION
+              value: "[%X{trace_id:-},%X{span_id:-}] "
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: invoicing-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-dotnet: "monitoring/vankoo"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: profile-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-nodejs: "monitoring/vankoo"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-nodejs: "monitoring/vankoo"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: risk-service
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-python: "monitoring/vankoo"
