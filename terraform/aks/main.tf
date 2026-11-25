@@ -43,9 +43,10 @@ locals {
 
 # Riesgo aceptado (Trivy AVD-AZU-0041, CRITICAL): el API server del clúster no limita
 # las IP de origen. El equipo administra el clúster con kubectl desde casa, con IP que
-# cambian, y una lista fija lo dejaría fuera. Lo mitigan: credenciales de Entra/RBAC del
-# grupo para obtener el kubeconfig, TLS y nada de cuentas locales compartidas. Motivo y
-# plan para producción: «Riesgos aceptados» en k8s/README.md.
+# cambian, y una lista fija lo dejaría fuera. Lo mitigan: hace falta un rol de Azure sobre
+# el grupo para obtener el kubeconfig, y el tráfico va por TLS. Ojo: el clúster aún usa
+# cuentas locales (sin Entra ID), así que ese kubeconfig es de administrador; también es un
+# riesgo aceptado. Motivo y plan para producción: «Riesgos aceptados» en k8s/README.md.
 #trivy:ignore:AVD-AZU-0041
 resource "azurerm_kubernetes_cluster" "vankoo" {
   name                = "vankoo-aks-${local.suffix}"
