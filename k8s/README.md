@@ -162,6 +162,17 @@ dispositivo al iniciar sesión. Si no las trae, los push solo se escriben en el 
 los topics sale de `NOTIFICATION_PUSH_TOPIC_SECRET` si existe. iOS necesita además APNs (cuenta de
 Apple Developer).
 
+### KYC del inversionista (función DNI)
+
+Si existe la capa `terraform/functions` (la función serverless de verificación de DNI, en Azure
+Functions), `aks-deploy.sh` lee su URL de Terraform y su clave con `az functionapp keys list` (sin
+imprimirla), y Profile verifica el DNI de cada inversionista al completar su perfil: `VERIFIED`
+si el DNI existe y los nombres coinciden, rechazo con el motivo si no, y revisión manual si la
+función no responde. En la nube la función usa el proveedor `fake` (ver
+`docs/funciones-serverless.md`): para demostrarlo, el DNI `12345678` con «Juan Carlos» / «Pérez
+Gómez» sale verificado y cualquier otro DNI, rechazado. La función tiene que estar encendida
+(`az functionapp start`).
+
 ### Stripe en AKS
 
 Stripe avisa de los pagos directamente a AKS: el endpoint de webhook está registrado en la cuenta

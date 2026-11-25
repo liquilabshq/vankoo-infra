@@ -67,6 +67,7 @@ patches:
   - path: patches/risk.yaml
   - path: patches/email.yaml
   - path: patches/push.yaml
+  - path: patches/dni-verification.yaml
   - path: patches/public-urls.yaml
   - path: patches/volume-permissions.yaml
   - path: patches/risk-db-size.yaml

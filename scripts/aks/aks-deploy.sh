@@ -8,7 +8,8 @@
 #     imprimirlas ni dejarlas en disco.
 #   - ConfigMap vankoo-deploy: URL pública (IP del Ingress), bucket de certificados y
 #     correo: Azure Communication Services si existe la capa email, si no Mailpit;
-#     push: Firebase si el .env trae su cuenta de servicio, si no solo log.
+#     push: Firebase si el .env trae su cuenta de servicio, si no solo log;
+#     KYC del inversionista: la función DNI si existe la capa functions, si no manual.
 #   - ConfigMap kyc-demo-ca: CA de demostración del KYC (PARCHE TEMPORAL).
 #
 # Uso: scripts/aks/aks-deploy.sh [--env-file <ruta>] [--restart]
@@ -75,6 +76,16 @@ fi
 push_topic_secret="$(env_value "$ENV_FILE" NOTIFICATION_PUSH_TOPIC_SECRET)"
 [[ -n "$push_topic_secret" ]] || push_topic_secret="$(keep PUSH_TOPIC_SECRET)"
 
+# KYC del inversionista: verificación automática del DNI con la función serverless de la
+# capa terraform/functions, si existe y está encendida; si no, revisión manual.
+dni_enabled=false; dni_url=""; dni_key=""
+if tf_init functions >/dev/null 2>&1 && dni_url="$(tf_output functions verify_dni_url 2>/dev/null)" \
+    && [[ -n "$dni_url" ]]; then
+  dni_app="$(tf_output functions function_app_name 2>/dev/null)"
+  dni_key="$(az functionapp keys list -g "$VANKOO_RG" -n "$dni_app" --query functionKeys.default -o tsv 2>/dev/null || true)"
+  [[ -n "$dni_key" ]] && dni_enabled=true || warn "No pude leer la clave de la función DNI: el KYC del inversionista queda manual"
+fi
+
 secrets="$(mktemp)"; chmod 600 "$secrets"
 trap 'rm -f "$secrets"' EXIT
 iam_db_password="$(keep IAM_DB_PASSWORD)"
@@ -98,6 +109,7 @@ investment_db_password="$(keep INVESTMENT_DB_PASSWORD)"
   # referencian estas claves.
   printf 'MINIO_ROOT_USER=unused\nMINIO_ROOT_PASSWORD=%s\n' "$(keep MINIO_ROOT_PASSWORD)"
   printf 'PUSH_TOPIC_SECRET=%s\n' "$push_topic_secret"
+  [[ "$dni_enabled" == true ]] && printf 'DNI_VERIFICATION_KEY=%s\n' "$dni_key"
   if [[ "$push_provider" == firebase ]]; then
     for key in FIREBASE_PROJECT_ID FIREBASE_CLIENT_EMAIL FIREBASE_PRIVATE_KEY; do
       printf '%s=%s\n' "$key" "$(env_value "$ENV_FILE" "$key")"
@@ -130,6 +142,8 @@ kubectl -n "$NAMESPACE" create configmap vankoo-deploy \
   --from-literal=PASSWORD_RESET_WEB_URL="$public_url/iam/reset" \
   --from-literal=GREEN_DOCUMENTS_BASE_URL="https://$bucket.s3.$region.amazonaws.com" \
   --from-literal=PUSH_PROVIDER="$push_provider" \
+  --from-literal=DNI_VERIFICATION_ENABLED="$dni_enabled" \
+  --from-literal=DNI_VERIFICATION_URL="$dni_url" \
   --from-literal=EMAIL_PROVIDER="$email_provider" \
   --from-literal=MAIL_FROM="$mail_from" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null

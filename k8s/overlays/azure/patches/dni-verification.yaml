@@ -1,0 +1,20 @@
+# KYC del inversionista en Azure: Profile llama a la función serverless de verificación
+# de DNI (capa terraform/functions) si scripts/aks/aks-deploy.sh la encontró: pone
+# DNI_VERIFICATION_ENABLED y la URL en vankoo-deploy y la clave en vankoo-secrets. Si no,
+# DNI_VERIFICATION_ENABLED=false y el KYC queda en revisión manual.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: profile-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: profile-service
+          env:
+            - name: DNI_VERIFICATION_ENABLED
+              valueFrom: {configMapKeyRef: {name: vankoo-deploy, key: DNI_VERIFICATION_ENABLED}}
+            - name: DNI_VERIFICATION_URL
+              valueFrom: {configMapKeyRef: {name: vankoo-deploy, key: DNI_VERIFICATION_URL, optional: true}}
+            - name: DNI_VERIFICATION_KEY
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: DNI_VERIFICATION_KEY, optional: true}}
