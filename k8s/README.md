@@ -242,11 +242,15 @@ suplantando el grupo:
 ```bash
 kubectl -n vankoo exec deploy/iam-service -- ls /var/run/secrets/kubernetes.io/serviceaccount  # No such file or directory
 kubectl auth can-i list secrets -n vankoo --as=system:serviceaccount:vankoo:iam-service          # no
-kubectl auth can-i get pods/log -n vankoo --as=demo --as-group=vankoo:viewers                     # yes
+kubectl auth can-i get pods --subresource=log -n vankoo --as=demo --as-group=vankoo:viewers      # yes
 kubectl auth can-i get secrets -n vankoo --as=demo --as-group=vankoo:viewers                      # no
 kubectl auth can-i patch deployments -n vankoo --as=demo --as-group=vankoo:operators              # yes
-kubectl auth can-i create pods/exec -n vankoo --as=demo --as-group=vankoo:operators               # no
+kubectl auth can-i update deployments --subresource=scale -n vankoo --as=demo --as-group=vankoo:operators  # yes
+kubectl auth can-i create pods --subresource=exec -n vankoo --as=demo --as-group=vankoo:operators          # no
 ```
+
+Los subrecursos (`log`, `scale`, `exec`, `portforward`) se piden con `--subresource`: escrito como
+`pods/log`, `kubectl auth can-i` lo lee como un pod llamado «log» y responde por el permiso equivocado.
 
 ## Riesgos aceptados
 
