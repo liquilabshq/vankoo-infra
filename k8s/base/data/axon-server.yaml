@@ -35,9 +35,20 @@ spec:
             limits:
               cpu: 1000m
               memory: 1Gi
+          # Las tres carpetas con estado van al disco: data (control), events (el event
+          # store de Finance) y log (registro de replicación). Si events o log quedan en
+          # el contenedor, un reinicio pierde los eventos y Axon no vuelve a activar el
+          # contexto default («Last applied index … is higher than last log index 0»).
           volumeMounts:
             - name: data
               mountPath: /axonserver/data
+              subPath: data
+            - name: data
+              mountPath: /axonserver/events
+              subPath: events
+            - name: data
+              mountPath: /axonserver/log
+              subPath: log
   volumeClaimTemplates:
     - metadata:
         name: data
