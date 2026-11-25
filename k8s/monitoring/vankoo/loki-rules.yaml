@@ -1,0 +1,21 @@
+# Alertas basadas en logs: las evalúa el ruler de Loki (loki-values.yaml) con LogQL y
+# las manda al mismo Alertmanager que las de Prometheus (rules.yaml). Llegan a Loki
+# en un ConfigMap con la etiqueta loki_rule (kustomization.yaml), que el sidecar del
+# pod de Loki copia a su carpeta de reglas.
+#
+# Complementan a los SLO: un servicio puede responder 200 y aun así fallar por
+# dentro (un consumidor de Kafka que no procesa, un worker de OCR que revienta), y
+# eso solo se ve en sus logs.
+groups:
+  - name: vankoo-logs
+    rules:
+      - alert: VankooErrorLogsSpike
+        # Más de 20 líneas de error en 5 minutos en un mismo servicio, sostenido 5 min.
+        expr: sum by (app) (count_over_time({namespace="vankoo", level=~"error|fatal"}[5m])) > 20
+        for: 5m
+        labels:
+          severity: warning
+          namespace: vankoo
+        annotations:
+          summary: "{{ $labels.app }} escribe muchos errores en sus logs ({{ $value }} en 5 min)"
+          runbook: "k8s/monitoring/RUNBOOK.md#ráfaga-de-errores-en-los-logs"
