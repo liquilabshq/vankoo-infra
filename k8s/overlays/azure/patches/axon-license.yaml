@@ -1,0 +1,16 @@
+# Licencia de Axon Server en Azure: se conecta a Axoniq Platform, que le da y le renueva
+# la licencia (plan Individual, solo desarrollo). scripts/aks/aks-deploy.sh pone el valor
+# <environment-id>:<access-token> del .env en vankoo-secrets. Sin él, Axon corre sin
+# licencia y se apaga a las 12 h (Kubernetes lo levanta; sus datos están en el disco).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: axon-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: axon-server
+          env:
+            - name: AXONIQ_PLATFORM_AUTHENTICATION
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: AXONIQ_PLATFORM_AUTHENTICATION, optional: true}}
