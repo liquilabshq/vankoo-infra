@@ -574,6 +574,16 @@ resource "azurerm_container_app" "profile" {
         name        = "AWS_SECRET_ACCESS_KEY"
         secret_name = "aws-secret-access-key"
       }
+      # Servidores que Profile anuncia en su OpenAPI (/openapi/v1.json): el
+      # «Send» de Scalar va por el gateway, que valida el JWT y pone X-User-Id.
+      env {
+        name  = "DOCUMENTATION_GATEWAY_URL"
+        value = "https://${local.gateway_app}.${local.domain}/profile"
+      }
+      env {
+        name  = "DOCUMENTATION_SERVER_URL"
+        value = "https://${local.profile_app}.internal.${local.domain}"
+      }
       env {
         name  = "DNI_VERIFICATION_ENABLED"
         value = tostring(local.dni_verification_enabled)
@@ -723,5 +733,10 @@ resource "azurerm_container_app" "gateway" {
         path    = "/actuator/health/readiness"
       }
     }
+  }
+
+  # Igual que en IAM: la imagen la gestiona el pipeline del repo del gateway.
+  lifecycle {
+    ignore_changes = [template[0].container[0].image]
   }
 }

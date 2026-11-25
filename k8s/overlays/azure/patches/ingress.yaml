@@ -1,0 +1,33 @@
+# Un solo origen para la web y el API, en HTTPS: https://vankoo-liquilabs.centralus.cloudapp.azure.com
+# (nombre DNS de Azure de la IP del ingress-nginx, ver scripts/aks/aks-up.sh). El
+# certificado lo pide y renueva cert-manager a Let's Encrypt, y HTTP redirige a HTTPS.
+#   /<servicio>/api/... y la documentación → API Gateway
+#   (el webhook de Stripe tiene su propio Ingress: stripe-webhook-ingress.yaml)
+#   todo lo demás                           → web MYPE
+- op: add
+  path: /metadata/annotations/cert-manager.io~1cluster-issuer
+  value: letsencrypt
+- op: add
+  path: /metadata/annotations/nginx.ingress.kubernetes.io~1force-ssl-redirect
+  value: "true"
+- op: add
+  path: /spec/tls
+  value:
+    - hosts: [vankoo-liquilabs.centralus.cloudapp.azure.com]
+      secretName: vankoo-tls
+- op: replace
+  path: /spec/rules
+  value:
+    - host: vankoo-liquilabs.centralus.cloudapp.azure.com
+      http:
+        paths:
+          - {path: /iam/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /profile/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /invoicing/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /investment/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /finance/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /risk/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /notification/api, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /scalar, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /v3/api-docs, pathType: Prefix, backend: {service: {name: api-gateway, port: {name: http}}}}
+          - {path: /, pathType: Prefix, backend: {service: {name: mype-web, port: {name: http}}}}

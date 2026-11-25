@@ -1,0 +1,13 @@
+# En Azure los archivos van al S3 real (los mismos buckets que Container Apps):
+# MinIO no se despliega. Además su imagen ya no se publica en Docker Hub.
+$patch: delete
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+---
+$patch: delete
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio

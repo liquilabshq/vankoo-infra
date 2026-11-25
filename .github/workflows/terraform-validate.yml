@@ -1,0 +1,68 @@
+# Valida el código de Terraform en cada Pull Request y en develop.
+#
+# Por cada capa (core, base, data, apps, functions, messaging):
+#   1. terraform fmt -check   → formato canónico
+#   2. terraform init -backend=false + terraform validate → sintaxis, tipos y
+#      referencias, sin tocar el estado remoto ni Azure
+#   3. tflint → buenas prácticas (falla solo con errores; los avisos se muestran)
+#
+# No necesita credenciales: ninguna capa se conecta a Azure en estos pasos.
+# El plan contra el estado real (terraform plan) queda fuera porque exige leer
+# el estado remoto con una identidad de Azure.
+name: Terraform validate
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-validate.yml"
+  push:
+    branches: [develop]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-validate.yml"
+
+concurrency:
+  group: terraform-validate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    name: Format (terraform fmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.5
+      - name: Check formatting
+        run: terraform fmt -check -recursive -diff terraform
+
+  validate:
+    name: Validate ${{ matrix.layer }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        layer: [core, base, data, apps, functions, messaging]
+    defaults:
+      run:
+        working-directory: terraform/${{ matrix.layer }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.5
+      - name: Init without backend
+        run: terraform init -backend=false -input=false
+      - name: Validate
+        run: terraform validate
+      - uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.59.1
+      - name: Lint
+        run: tflint --format compact --minimum-failure-severity=error

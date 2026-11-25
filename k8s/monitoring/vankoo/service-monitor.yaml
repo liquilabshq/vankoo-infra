@@ -1,0 +1,16 @@
+# Prometheus recoge las métricas del API Gateway: todas las peticiones a Vankoo
+# lo cruzan, así que sus métricas por ruta, estado y latencia son los SLI.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vankoo-api-gateway
+spec:
+  namespaceSelector:
+    matchNames: [vankoo]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+  endpoints:
+    - port: http
+      path: /actuator/prometheus
+      interval: 30s

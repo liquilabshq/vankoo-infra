@@ -1,0 +1,17 @@
+# Emisor de certificados de Let's Encrypt (producción). El reto HTTP-01 se responde
+# por el mismo ingress-nginx, así que basta con que el nombre DNS apunte a su IP.
+# Sin correo de contacto: no se publica ningún dato personal; Let's Encrypt solo
+# lo usa para avisar de certificados por caducar, y cert-manager los renueva solo.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx

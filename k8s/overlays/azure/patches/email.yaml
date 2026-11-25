@@ -1,0 +1,40 @@
+# Correo en Azure: Azure Communication Services (capa terraform/email) por su API
+# REST, en vez de Mailpit. scripts/aks/aks-deploy.sh pone en vankoo-deploy el
+# proveedor (acs si la capa existe, smtp si no) y el remitente, y en vankoo-secrets
+# la cadena de conexión. Con smtp todo sigue yendo a Mailpit, como en local.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: notification-service
+          env:
+            - name: EMAIL_PROVIDER
+              value: null
+              valueFrom: {configMapKeyRef: {name: vankoo-deploy, key: EMAIL_PROVIDER}}
+            - name: MAIL_FROM
+              value: null
+              valueFrom: {configMapKeyRef: {name: vankoo-deploy, key: MAIL_FROM}}
+            - name: ACS_CONNECTION_STRING
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: ACS_CONNECTION_STRING, optional: true}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iam-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: iam-service
+          env:
+            - name: MAIL_PROVIDER
+              valueFrom: {configMapKeyRef: {name: vankoo-deploy, key: EMAIL_PROVIDER}}
+            - name: MAIL_FROM
+              value: null
+              valueFrom: {configMapKeyRef: {name: vankoo-deploy, key: MAIL_FROM}}
+            - name: ACS_CONNECTION_STRING
+              valueFrom: {secretKeyRef: {name: vankoo-secrets, key: ACS_CONNECTION_STRING, optional: true}}

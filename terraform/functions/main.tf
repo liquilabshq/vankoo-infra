@@ -34,6 +34,15 @@ locals {
 # Azure Functions guarda aquí su estado interno (claves, coordinación del host)
 # y, en Flex, el paquete de código desplegado.
 # 24 caracteres como máximo, solo minúsculas y números.
+#
+# Riesgo aceptado (Trivy AVD-AZU-0012): la cuenta no restringe la red. En Flex
+# Consumption sin red virtual, el host de la función y el despliegue llegan a ella por
+# su endpoint público, así que con default_action = "Deny" la función no arrancaría.
+# Controles: acceso solo con la clave de la cuenta, TLS 1.2 mínimo y sin blobs
+# públicos; la cuenta no guarda datos personales (solo las claves de la función y el
+# paquete de código). Motivo y plan para producción: «Riesgos aceptados» en
+# docs/funciones-serverless.md.
+#trivy:ignore:AVD-AZU-0012
 resource "azurerm_storage_account" "functions" {
   name                            = "vankoofn${local.suffix}"
   resource_group_name             = data.azurerm_resource_group.vankoo.name

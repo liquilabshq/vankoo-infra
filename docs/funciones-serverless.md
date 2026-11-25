@@ -80,6 +80,34 @@ consumo más reciente de Azure Functions: el mismo producto, código y disparado
 por ejecución), con otro tipo de plan (`FC1`) y otra cuota. Cambia la capa Terraform y el paso de despliegue; el código
 de la función no cambia.
 
+## Riesgos aceptados
+
+### La cuenta de almacenamiento de la función no restringe la red (Trivy AVD-AZU-0012, CRITICAL)
+
+**Qué se acepta.** La cuenta `vankoofn…` de la capa `functions` acepta conexiones desde cualquier red: no tiene
+`network_rules` con `default_action = "Deny"`. Trivy lo marca como CRITICAL. La línea `#trivy:ignore:AVD-AZU-0012`
+de `terraform/functions/main.tf` lo excluye **solo para ese recurso**: cualquier otra cuenta de almacenamiento que se
+cree seguirá vigilada por la regla.
+
+**Por qué.** En Flex Consumption el host de la función lee y escribe esa cuenta (sus claves y el paquete de código), y
+el despliegue de GitHub Actions publica ahí el código. Sin red virtual, esos accesos llegan por el endpoint público:
+denegar el tráfico dejaría la función sin arrancar y sin poder desplegarse. Restringirlo exige integrar la función en
+una red virtual (subred delegada, service endpoint de Storage y reglas por subred), y hoy ninguna capa de Vankoo usa
+redes virtuales. Para un entorno académico ese cambio de arquitectura no compensa frente a lo que protege.
+
+**Qué lo mitiga.**
+- Sin la clave de la cuenta no se puede leer ni escribir nada. La clave solo la tienen el estado remoto de Terraform y la
+  configuración del Function App.
+- TLS 1.2 mínimo y sin blobs públicos (`allow_nested_items_to_be_public = false`).
+- La cuenta no guarda datos personales: la función no persiste ningún DNI ni nombre.
+
+**Plan para producción.**
+1. Integrar la función en una red virtual (subred delegada para Flex Consumption).
+2. Poner `network_rules` con `default_action = "Deny"` y permitir solo esa subred (service endpoint), o usar private
+   endpoints.
+3. Pasar de la clave de la cuenta a una identidad administrada (`storage_authentication_type`) y desactivar las claves
+   compartidas.
+
 ## Limitaciones conocidas
 
 - **eldni.com no responde a las peticiones que salen de Azure.** Al desplegar la función en Central US, la consulta

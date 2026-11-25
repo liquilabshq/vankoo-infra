@@ -1,0 +1,70 @@
+# SLO de Vankoo y alertas. Los SLI salen del API Gateway (http.server.requests) y
+# del estado de los pods (kube-state-metrics).
+#
+# SLO (ventana de 30 días):
+#   - Disponibilidad: el 99 % de las peticiones al API no termina en 5xx.
+#   - Latencia: el p95 de las peticiones al API, por debajo de 1 s.
+# Las alertas de «quema rápida» avisan si el error supera 14,4 veces el
+# presupuesto (1 %) durante 5 minutos, es decir, si a ese ritmo se gastaría en
+# unas 2 horas el presupuesto de todo el mes.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: vankoo
+spec:
+  groups:
+    - name: vankoo-slo
+      rules:
+        - record: vankoo:gateway_requests:rate5m
+          expr: sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway"}[5m]))
+        - record: vankoo:gateway_errors:rate5m
+          # «or vector(0)»: sin ningún 5xx la suma no tendría series y la
+          # disponibilidad saldría vacía en vez de 100 %.
+          expr: sum(rate(http_server_requests_seconds_count{namespace="vankoo", job="api-gateway", status=~"5.."}[5m])) or vector(0)
+        - record: vankoo:gateway_availability:ratio5m
+          expr: 1 - (vankoo:gateway_errors:rate5m / clamp_min(vankoo:gateway_requests:rate5m, 1e-9))
+        - record: vankoo:gateway_latency_p95:5m
+          expr: histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{namespace="vankoo", job="api-gateway"}[5m])))
+        - alert: VankooApiErrorBudgetFastBurn
+          expr: (vankoo:gateway_errors:rate5m / clamp_min(vankoo:gateway_requests:rate5m, 1e-9)) > (14.4 * 0.01) and vankoo:gateway_requests:rate5m > 0.05
+          for: 5m
+          labels: {severity: critical, slo: disponibilidad}
+          annotations:
+            summary: "El API devuelve demasiados 5xx: se está gastando el presupuesto de errores del SLO"
+            runbook: "k8s/monitoring/RUNBOOK.md#api-con-errores-5xx"
+        - alert: VankooApiLatencyHigh
+          expr: vankoo:gateway_latency_p95:5m > 1
+          for: 10m
+          labels: {severity: warning, slo: latencia}
+          annotations:
+            summary: "El p95 de la latencia del API supera 1 s"
+            runbook: "k8s/monitoring/RUNBOOK.md#api-lenta"
+    - name: vankoo-workloads
+      rules:
+        - alert: VankooPodRestarting
+          expr: increase(kube_pod_container_status_restarts_total{namespace="vankoo"}[15m]) > 2
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ $labels.pod }} se reinició más de 2 veces en 15 minutos"
+            runbook: "k8s/monitoring/RUNBOOK.md#pod-que-se-reinicia"
+        - alert: VankooDeploymentUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="vankoo"} < 1
+          for: 5m
+          labels: {severity: critical}
+          annotations:
+            summary: "{{ $labels.deployment }} no tiene ninguna réplica disponible"
+            runbook: "k8s/monitoring/RUNBOOK.md#servicio-caído"
+        - alert: VankooDataStoreDown
+          expr: kube_statefulset_status_replicas_ready{namespace="vankoo"} < 1
+          for: 5m
+          labels: {severity: critical}
+          annotations:
+            summary: "{{ $labels.statefulset }} (base de datos o broker) no está listo"
+            runbook: "k8s/monitoring/RUNBOOK.md#base-o-broker-caído"
+        - alert: VankooNodeMemoryPressure
+          expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.9
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "El nodo {{ $labels.instance }} usa más del 90 % de su memoria"
+            runbook: "k8s/monitoring/RUNBOOK.md#nodo-sin-memoria"
