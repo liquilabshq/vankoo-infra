@@ -80,6 +80,28 @@ consumo más reciente de Azure Functions: el mismo producto, código y disparado
 por ejecución), con otro tipo de plan (`FC1`) y otra cuota. Cambia la capa Terraform y el paso de despliegue; el código
 de la función no cambia.
 
+## Verificación real en la nube: API Perú (opcional)
+
+Como el scraping de eldni.com no funciona desde Azure, la función admite una tercera fuente: la API REST de
+[API Perú](https://apiperu.pe) (`dni_provider = "apiperu"`). Es una API con token, pensada para llamarse desde
+servidores. Solo recibe el DNI (nunca los nombres declarados) y devuelve los nombres, que la función compara por su
+cuenta. Por defecto la capa sigue en `fake`: el token es un secreto y el plan gratuito son 100 consultas al mes.
+
+Para activarla (con la función encendida; si el Function App está detenido hay que arrancarlo antes de probar):
+
+```bash
+export TF_VAR_apiperu_token='<token>'   # no lo escribas en ningún archivo versionado
+source scripts/azure/lib.sh && setup_terraform_env && tf_apply functions -var dni_provider=apiperu
+```
+
+- **Sin token no se puede elegir `apiperu`:** el plan falla con un mensaje claro (precondición en `main.tf`).
+- **Es declarativo.** Si después alguien ejecuta `azure-deploy.sh` sin esas variables, la capa vuelve a `fake` y quita el
+  token del Function App. Es el comportamiento seguro por defecto, pero conviene saberlo.
+- **El token queda en el estado remoto** de Terraform (cuenta de almacenamiento del grupo), marcado como sensible, y no
+  aparece en los planes.
+- Su proveedor no declara públicamente el origen de los datos de DNI ni su identidad legal: se considera una fuente
+  para demostraciones, no para producción.
+
 ## Riesgos aceptados
 
 ### La cuenta de almacenamiento de la función no restringe la red (Trivy AVD-AZU-0012, CRITICAL)
@@ -117,7 +139,7 @@ redes virtuales. Para un entorno académico ese cambio de arquitectura no compen
   defecto en `terraform/functions`), con DNIs de demostración, y el scraping real se demuestra desde local. La
   arquitectura lo previó: la fuente está detrás de un puerto intercambiable, y el error 502 informa el motivo del fallo
   (`reason`), lo que permitió diagnosticarlo en minutos. Para reintentar con la fuente real (otra región, otra IP de
-  salida): `-var dni_provider=eldni`.
+  salida): `-var dni_provider=eldni`. La alternativa para una verificación real en la nube es API Perú (ver arriba).
 - eldni.com **no es la fuente oficial de RENIEC**: puede tener errores o cambiar su HTML. Mitigado con el puerto
   intercambiable, el proveedor `fake` y la regla de fallar hacia revisión manual.
 - Los fixtures HTML son respuestas reales de eldni.com (capturadas en noviembre de 2026, con los datos personales

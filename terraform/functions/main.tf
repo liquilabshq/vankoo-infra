@@ -104,14 +104,25 @@ resource "azurerm_function_app_flex_consumption" "dni_verification" {
     application_insights_connection_string = azurerm_application_insights.functions.connection_string
   }
 
-  app_settings = {
-    # El host guarda aquí las claves de la función (x-functions-key).
-    AzureWebJobsStorage = azurerm_storage_account.functions.primary_connection_string
-    # La función lee estas variables en dni_verification/infrastructure/settings.py.
-    DNI_PROVIDER          = var.dni_provider
-    ELDNI_BASE_URL        = "https://eldni.com"
-    ELDNI_TIMEOUT_SECONDS = "8"
-    ELDNI_RETRIES         = "1"
+  app_settings = merge(
+    {
+      # El host guarda aquí las claves de la función (x-functions-key).
+      AzureWebJobsStorage = azurerm_storage_account.functions.primary_connection_string
+      # La función lee estas variables en dni_verification/infrastructure/settings.py.
+      DNI_PROVIDER          = var.dni_provider
+      ELDNI_BASE_URL        = "https://eldni.com"
+      ELDNI_TIMEOUT_SECONDS = "8"
+      ELDNI_RETRIES         = "1"
+    },
+    # El token solo se publica si se pasó: sin él no aparece ningún ajuste vacío en el plan.
+    var.apiperu_token == "" ? {} : { APIPERU_TOKEN = var.apiperu_token },
+  )
+
+  lifecycle {
+    precondition {
+      condition     = var.dni_provider != "apiperu" || var.apiperu_token != ""
+      error_message = "Con dni_provider = \"apiperu\" hace falta el token: exporta TF_VAR_apiperu_token."
+    }
   }
 
   tags = {
