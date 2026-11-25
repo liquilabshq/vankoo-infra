@@ -17,6 +17,10 @@ spec:
         app.kubernetes.io/name: investment-db-oracle
         app.kubernetes.io/component: data
     spec:
+      # Identidad propia y sin token de la API: el servicio no habla con Kubernetes
+      # (ver k8s/base/rbac/service-accounts.yaml).
+      serviceAccountName: investment-db-oracle
+      automountServiceAccountToken: false
       containers:
         - name: investment-db-oracle
           image: gvenzl/oracle-free:23-slim-faststart

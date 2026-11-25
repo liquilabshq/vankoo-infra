@@ -17,6 +17,10 @@ spec:
         app.kubernetes.io/name: minio
         app.kubernetes.io/component: data
     spec:
+      # Identidad propia y sin token de la API: el servicio no habla con Kubernetes
+      # (ver k8s/base/rbac/service-accounts.yaml).
+      serviceAccountName: minio
+      automountServiceAccountToken: false
       containers:
         - name: minio
           image: minio/minio:RELEASE.2025-09-07T16-13-09Z

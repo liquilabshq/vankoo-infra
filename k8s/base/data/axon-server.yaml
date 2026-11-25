@@ -17,6 +17,10 @@ spec:
         app.kubernetes.io/name: axon-server
         app.kubernetes.io/component: data
     spec:
+      # Identidad propia y sin token de la API: el servicio no habla con Kubernetes
+      # (ver k8s/base/rbac/service-accounts.yaml).
+      serviceAccountName: axon-server
+      automountServiceAccountToken: false
       containers:
         - name: axon-server
           image: axoniq/axonserver:2026.1.7

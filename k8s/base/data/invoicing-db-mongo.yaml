@@ -17,6 +17,10 @@ spec:
         app.kubernetes.io/name: invoicing-db-mongo
         app.kubernetes.io/component: data
     spec:
+      # Identidad propia y sin token de la API: el servicio no habla con Kubernetes
+      # (ver k8s/base/rbac/service-accounts.yaml).
+      serviceAccountName: invoicing-db-mongo
+      automountServiceAccountToken: false
       containers:
         - name: invoicing-db-mongo
           image: mongo:7.0

@@ -17,6 +17,10 @@ spec:
         app.kubernetes.io/name: risk-db-postgres
         app.kubernetes.io/component: data
     spec:
+      # Identidad propia y sin token de la API: el servicio no habla con Kubernetes
+      # (ver k8s/base/rbac/service-accounts.yaml).
+      serviceAccountName: risk-db-postgres
+      automountServiceAccountToken: false
       containers:
         - name: risk-db-postgres
           image: postgres:15

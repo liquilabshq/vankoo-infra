@@ -1,3 +1,12 @@
+# Identidad de la web, sin token de la API (como el resto: k8s/base/rbac/service-accounts.yaml).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mype-web
+  labels:
+    app.kubernetes.io/name: mype-web
+automountServiceAccountToken: false
+---
 # Web MYPE (vankoo-mype-web): SPA compilada servida por nginx sin privilegios.
 # Comparte origen con el API (ver patches/ingress.yaml), así que no necesita CORS.
 apiVersion: apps/v1
@@ -24,6 +33,10 @@ spec:
         app.kubernetes.io/name: mype-web
         app.kubernetes.io/component: frontend
     spec:
+      # Identidad propia y sin token de la API: el servicio no habla con Kubernetes
+      # (ver k8s/base/rbac/service-accounts.yaml).
+      serviceAccountName: mype-web
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
       containers:

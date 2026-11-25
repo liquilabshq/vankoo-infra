@@ -7,6 +7,8 @@ labels:
     includeSelectors: false
 resources:
   - namespace.yaml
+  - rbac/service-accounts.yaml
+  - rbac/roles.yaml
   - data/iam-db-postgres.yaml
   - data/profile-db-postgres.yaml
   - data/finance-db-postgres.yaml
