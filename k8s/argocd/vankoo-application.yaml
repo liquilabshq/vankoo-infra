@@ -1,8 +1,8 @@
 # Aplicación de Argo CD: mantiene el namespace vankoo igual que k8s/overlays/azure
 # en GitHub (GitOps). Cada commit que cambie el overlay o la base se aplica solo;
 # si alguien cambia algo a mano en el clúster, Argo CD lo devuelve a lo que dice
-# Git (selfHeal). Para volver atrás: «Rollback» en la interfaz de Argo CD o
-# `argocd app rollback vankoo <id>`, o revertir el commit en Git.
+# Git (selfHeal). Para volver atrás se revierte el commit en Git: con el sync
+# automático, Argo CD no deja usar «Rollback» (ver k8s/README.md).
 #
 # Lo que no está en Git no lo toca: el Secret vankoo-secrets y los ConfigMaps
 # vankoo-deploy y kyc-demo-ca los crea scripts/aks/aks-deploy.sh.
@@ -15,7 +15,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/liquilabshq/vankoo-infra.git
-    targetRevision: feature/aks-deployment
+    targetRevision: develop
     path: k8s/overlays/azure
   destination:
     server: https://kubernetes.default.svc
