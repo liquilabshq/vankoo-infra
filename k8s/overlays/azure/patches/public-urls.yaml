@@ -1,0 +1,27 @@
+# Enlaces que IAM y Notification mandan por correo: apuntan a la URL pública de
+# este despliegue (vankoo-deploy, lo crea scripts/aks/aks-deploy.sh con la IP del Ingress).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iam-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: iam-service
+          env:
+            - name: PASSWORD_RESET_WEB_URL
+              valueFrom: {configMapKeyRef: {name: vankoo-deploy, key: PASSWORD_RESET_WEB_URL}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: notification-service
+          env:
+            - name: WEB_APP_URL
+              valueFrom: {configMapKeyRef: {name: vankoo-deploy, key: WEB_APP_URL}}

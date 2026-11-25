@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: discovery-server
+  labels:
+    app.kubernetes.io/name: discovery-server
+    app.kubernetes.io/component: microservice
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: discovery-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: discovery-server
+        app.kubernetes.io/component: microservice
+    spec:
+      # Cada imagen ya fija su usuario sin privilegios (USER en el Dockerfile). No se
+      # declara runAsNonRoot porque varias usan un usuario con nombre (spring, risk)
+      # y Kubernetes solo puede comprobarlo con un UID numérico.
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: discovery-server
+          image: vankoo-discovery-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8761
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          startupProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: discovery-server
+  labels:
+    app.kubernetes.io/name: discovery-server
+spec:
+  selector:
+    app.kubernetes.io/name: discovery-server
+  ports:
+    - name: http
+      port: 8761
+      targetPort: http

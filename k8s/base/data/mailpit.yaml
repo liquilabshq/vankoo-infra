@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mailpit
+  labels:
+    app.kubernetes.io/name: mailpit
+    app.kubernetes.io/component: data
+spec:
+  serviceName: mailpit
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mailpit
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mailpit
+        app.kubernetes.io/component: data
+    spec:
+      containers:
+        - name: mailpit
+          image: axllent/mailpit:v1.27
+          ports:
+            - name: smtp
+              containerPort: 1025
+            - name: web
+              containerPort: 8025
+          env:
+            - name: MP_MAX_MESSAGES
+              value: "500"
+            - name: MP_SMTP_AUTH_ACCEPT_ANY
+              value: "true"
+            - name: MP_SMTP_AUTH_ALLOW_INSECURE
+              value: "true"
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  labels:
+    app.kubernetes.io/name: mailpit
+spec:
+  # Permite que el propio pod se alcance por su Service antes de estar listo
+  # (Kafka en modo KRaft habla con su controlador por kafka-broker:9093).
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: mailpit
+  ports:
+    - name: smtp
+      port: 1025
+      targetPort: smtp
+    - name: web
+      port: 8025
+      targetPort: web

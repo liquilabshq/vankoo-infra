@@ -1,0 +1,7 @@
+# Las imágenes propias se publican en ACR con la etiqueta móvil «aks» (además del
+# sha del commit). Con IfNotPresent, un nodo que ya tiene «aks» en caché arranca
+# la versión vieja tras un rollout; con Always, kubelet compara el digest con ACR
+# y solo descarga si cambió.
+- op: add
+  path: /spec/template/spec/containers/0/imagePullPolicy
+  value: Always
