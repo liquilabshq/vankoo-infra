@@ -2,7 +2,7 @@
 # en Azure Container Apps.
 #
 # Workflow reutilizable: cada servicio lo llama desde su propio pipeline cuando
-# su CI ya pasó. Construye la imagen y la publica en el registro (ACR).
+# su CI ya pasó. Construye y escanea la imagen y la publica en el registro (ACR).
 #
 # Desde el 25 nov 2026 Vankoo corre en AKS (k8s/, Argo CD) y las Container Apps
 # están paradas: el despliegue en ACA queda apagado por defecto, porque esperaba
@@ -17,6 +17,7 @@
 #     permissions:
 #       contents: read
 #       id-token: write
+#       security-events: write # opcional: sube el escaneo a la pestaña Security
 #     uses: liquilabshq/vankoo-infra/.github/workflows/deliver-container-app.yml@develop
 #     with:
 #       image: invoicing-service
@@ -32,12 +33,23 @@
 #
 # La imagen de estas Container Apps la gestiona este workflow: Terraform la
 # ignora después de crearlas (ver terraform/apps/main.tf).
+#
+# Gate de seguridad de la imagen (Trivy): la imagen se construye y se escanea
+# antes de publicarla. Solo bloquea un CRITICAL que ya tiene arreglo y no está
+# en la lista de riesgos aceptados; los HIGH (y los CRITICAL sin arreglo) se
+# informan sin bloquear, en el resumen del job y en la pestaña Security del repo
+# del servicio. Detalle y riesgos aceptados: docs/escaneo-de-imagenes.md.
 
 name: Deliver container app
 
 on:
   workflow_call:
     inputs:
+      image-policy:
+        description: Contrato de entrega escaneada. Los callers nuevos pueden exigir scanned-v1.
+        required: false
+        type: string
+        default: scanned-v1
       image:
         description: Nombre de la imagen en el registro (p. ej. invoicing-service).
         required: true
@@ -88,70 +100,361 @@ on:
         description: Referencia completa de la imagen desplegada.
         value: ${{ jobs.publish.outputs.image-ref }}
 
-permissions:
-  contents: read
-  id-token: write
+# Sin permisos a nivel de workflow a propósito: cada job declara los suyos, salvo
+# security-report, que hereda los del caller. Así security-events: write solo
+# llega a ese job si el caller lo concede, y los callers que no lo conceden
+# siguen funcionando (un job que pidiera más de lo concedido haría fallar el run
+# entero al arrancar).
+
+# No se llama TRIVY_VERSION: Trivy lee las variables TRIVY_* como flags.
+env:
+  SCANNER_VERSION: v0.76.2
 
 jobs:
-  publish:
-    name: Build and publish image
+  build-scan:
+    name: Build and scan image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
-      image-ref: ${{ steps.tags.outputs.image-ref }}
+      image-id: ${{ steps.candidate.outputs.image-id }}
+      archive-sha: ${{ steps.candidate.outputs.archive-sha }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      sarif-artifact-id: ${{ steps.upload-sarif.outputs.artifact-id }}
     steps:
-      - uses: actions/checkout@v4
-
-      # Misma convención que scripts/azure/build-push.sh: la etiqueta es el
-      # commit corto. Se añade la del ambiente para saber qué corre en él.
-      - name: Compute tags
-        id: tags
+      - name: Validate image policy
+        shell: bash
         env:
-          REPOSITORY: ${{ inputs.registry }}.azurecr.io/${{ inputs.image }}
-          ENVIRONMENT: ${{ inputs.environment }}
-        run: |
-          sha="${GITHUB_SHA::7}"
-          {
-            echo "image-ref=$REPOSITORY:$sha"
-            echo "tags<<EOF"
-            echo "$REPOSITORY:$sha"
-            echo "$REPOSITORY:$ENVIRONMENT"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          IMAGE_POLICY: ${{ inputs.image-policy }}
+        run: test "$IMAGE_POLICY" = scanned-v1
 
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          persist-credentials: false
 
-      - name: Registry login
-        run: az acr login --name "${{ inputs.registry }}"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      - name: Build local candidate (without publishing)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}
           platforms: linux/amd64
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
+          load: true
+          push: false
+          tags: vankoo-security-candidate:${{ github.sha }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=${{ inputs.image }}
           cache-to: type=gha,mode=max,scope=${{ inputs.image }}
 
+      - name: Save candidate and record its identity
+        id: candidate
+        shell: bash
+        env:
+          LOCAL_IMAGE: vankoo-security-candidate:${{ github.sha }}
+        run: |
+          archive="$RUNNER_TEMP/vankoo-image.tar"
+          image_id="$(docker image inspect --format '{{.Id}}' "$LOCAL_IMAGE")"
+          [[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker image save --output "$archive" "$image_id"
+          archive_sha="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          {
+            echo "image-id=$image_id"
+            echo "archive-sha=$archive_sha"
+            echo "artifact-name=scanned-image-$(cat /proc/sys/kernel/random/uuid)"
+          } >> "$GITHUB_OUTPUT"
+          # La configuración y la lista de ignorados salen de este workflow, nunca
+          # del repo del servicio: un trivy.yaml o un .trivyignore suyo no puede
+          # silenciar el gate.
+          printf '{}\n' > "$RUNNER_TEMP/vankoo-trivy.yaml"
+          touch "$RUNNER_TEMP/vankoo-trivy.ignore"
+
+      # Riesgos aceptados: los CRITICAL con arreglo que ya estaban en las imágenes
+      # desplegadas cuando se activó el gate (escaneo del 25 nov 2026 de las
+      # etiquetas aks y development). Todos son dependencias de la aplicación y se
+      # corrigen subiendo versiones en el repo de cada servicio; bloquear ahora no
+      # los quitaría de lo desplegado, solo impediría entregar el arreglo. Vencen
+      # el 31 ene 2027: desde ese día vuelven a bloquear. Un CRITICAL nuevo con
+      # arreglo bloquea siempre. Motivo, servicios afectados y plan de corrección:
+      # «Riesgos aceptados» en docs/escaneo-de-imagenes.md.
+      - name: Write the accepted risks
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/vankoo-trivy-accepted.ignore" <<'EOF'
+          # Spring Boot 4.0.x y sus dependencias gestionadas (IAM y gateway).
+          # Se corrigen con Spring Boot >= 4.0.6.
+          CVE-2026-40976 exp:2027-01-31
+          CVE-2026-22732 exp:2027-01-31
+          CVE-2026-47884 exp:2027-01-31
+          CVE-2026-47890 exp:2027-01-31
+          CVE-2026-47892 exp:2027-01-31
+          CVE-2026-41293 exp:2027-01-31
+          CVE-2026-43512 exp:2027-01-31
+          CVE-2026-43515 exp:2027-01-31
+          CVE-2026-55276 exp:2027-01-31
+          CVE-2026-65182 exp:2027-01-31
+          CVE-2026-65905 exp:2027-01-31
+          CVE-2026-68525 exp:2027-01-31
+          CVE-2026-40477 exp:2027-01-31
+          CVE-2026-40478 exp:2027-01-31
+          CVE-2026-41901 exp:2027-01-31
+          CVE-2026-33557 exp:2027-01-31
+          CVE-2026-75595 exp:2027-01-31
+          # Bouncy Castle 1.81 (IAM y gateway): subir bcprov-jdk18on a >= 1.85.
+          CVE-2025-14813 exp:2027-01-31
+          CVE-2026-8763 exp:2027-01-31
+          # Node.js (Profile y Notification): form-data y proxy-addr de la app, y tar
+          # dentro del pnpm global de la imagen de ejecución.
+          CVE-2025-7783 exp:2027-01-31
+          CVE-2026-90711 exp:2027-01-31
+          CVE-2026-59873 exp:2027-01-31
+          EOF
+
+      # Informe completo (HIGH y CRITICAL, con y sin arreglo, aceptados o no): es lo
+      # que se ve en el resumen y en la pestaña Security. No bloquea.
+      - name: Scan the candidate archive (report)
+        id: scan-report
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_IGNOREFILE: ${{ runner.temp }}/vankoo-trivy.ignore
+        with:
+          version: ${{ env.SCANNER_VERSION }}
+          scan-type: image
+          input: ${{ runner.temp }}/vankoo-image.tar
+          trivy-config: ${{ runner.temp }}/vankoo-trivy.yaml
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          format: json
+          output: ${{ runner.temp }}/trivy-report.json
+          exit-code: '0'
+
+      - name: Convert the report to SARIF
+        shell: bash
+        run: |
+          trivy convert --format sarif \
+            --output "$RUNNER_TEMP/trivy-image.sarif" "$RUNNER_TEMP/trivy-report.json"
+
+      - name: Keep the SARIF report
+        id: upload-sarif
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trivy-image-sarif
+          path: ${{ runner.temp }}/trivy-image.sarif
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+      - name: Summarize the scan
+        shell: bash
+        env:
+          IMAGE: ${{ inputs.image }}
+        run: |
+          today="$(date -u +%F)"
+          # IDs aceptados y todavía vigentes (Trivy deja de ignorarlos al vencer).
+          accepted="$(awk -v today="$today" '
+            $1 !~ /^#/ && NF {
+              until = ""
+              for (i = 2; i <= NF; i++) if ($i ~ /^exp:/) until = substr($i, 5)
+              if (until == "" || until >= today) print $1
+            }' "$RUNNER_TEMP/vankoo-trivy-accepted.ignore" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+
+          jq -r --argjson accepted "$accepted" --arg image "$IMAGE" --arg version "$SCANNER_VERSION" '
+            def fixed: (.FixedVersion // "") != "";
+            def row: "| \(.VulnerabilityID) | `\(.PkgName)` | \(.InstalledVersion) | \(if fixed then .FixedVersion else "—" end) |";
+            [.Results[]? | .Vulnerabilities[]?] as $v
+            | ($v | map(select(.Severity == "CRITICAL"))) as $crit
+            | ($v | map(select(.Severity == "HIGH"))) as $high
+            | ($crit | map(select(fixed))) as $critFixed
+            | ($critFixed | map(select(.VulnerabilityID | IN($accepted[])))) as $critAccepted
+            | ($critFixed | map(select((.VulnerabilityID | IN($accepted[])) | not))) as $blocking
+            | "### Escaneo de la imagen `\($image)` (Trivy \($version))",
+              "",
+              "| Severidad | Hallazgos | Con arreglo | Riesgo aceptado | Bloquean |",
+              "| --- | ---: | ---: | ---: | ---: |",
+              "| CRITICAL | \($crit | length) | \($critFixed | length) | \($critAccepted | length) | \($blocking | length) |",
+              "| HIGH | \($high | length) | \($high | map(select(fixed)) | length) | — | 0 (solo informa) |",
+              "",
+              (if ($blocking | length) > 0 then
+                 "**La imagen no se publica:** estos CRITICAL tienen arreglo y no están aceptados.",
+                 "",
+                 "| Vulnerabilidad | Paquete | Versión | Arreglo |",
+                 "| --- | --- | --- | --- |",
+                 ($blocking | unique_by([.VulnerabilityID, .PkgName, .InstalledVersion])[] | row)
+               else
+                 "Ningún CRITICAL con arreglo pendiente: la imagen pasa el gate."
+               end),
+              "",
+              (if ($critAccepted | length) > 0 then
+                 "<details><summary>CRITICAL aceptados (vencen el 31 ene 2027)</summary>",
+                 "",
+                 "| Vulnerabilidad | Paquete | Versión | Arreglo |",
+                 "| --- | --- | --- | --- |",
+                 ($critAccepted | unique_by([.VulnerabilityID, .PkgName, .InstalledVersion])[] | row),
+                 "",
+                 "</details>",
+                 ""
+               else empty end),
+              (if ($high | length) > 0 then
+                 "<details><summary>HIGH (no bloquean)</summary>",
+                 "",
+                 "| Vulnerabilidad | Paquete | Versión | Arreglo |",
+                 "| --- | --- | --- | --- |",
+                 ($high | unique_by([.VulnerabilityID, .PkgName, .InstalledVersion])[] | row),
+                 "",
+                 "</details>"
+               else empty end)
+          ' "$RUNNER_TEMP/trivy-report.json" >> "$GITHUB_STEP_SUMMARY"
+
+      # El gate: solo CRITICAL con arreglo publicado y fuera de los riesgos aceptados.
+      - name: Gate on fixable CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_IGNOREFILE: ${{ runner.temp }}/vankoo-trivy-accepted.ignore
+        with:
+          skip-setup-trivy: 'true'
+          cache: 'false'
+          scan-type: image
+          input: ${{ runner.temp }}/vankoo-image.tar
+          trivy-config: ${{ runner.temp }}/vankoo-trivy.yaml
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: 'true'
+          format: table
+          exit-code: '1'
+
+      - name: Upload the approved archive
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.candidate.outputs.artifact-name }}
+          path: ${{ runner.temp }}/vankoo-image.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  # Sube el escaneo a la pestaña Security del repo del servicio. Va aparte para que
+  # el job que construye (y ejecuta el Dockerfile del servicio) se quede con
+  # contents: read. No declara permisos: hereda los del caller y solo sube el
+  # SARIF si el caller concede security-events: write. Si no lo concede (o el repo
+  # es privado sin GitHub Code Security), avisa y sigue: nunca frena la entrega,
+  # y el SARIF queda como artefacto del run. Corre también cuando el gate falla,
+  # para ver ahí qué lo bloqueó.
+  security-report:
+    name: Upload scan to code scanning
+    needs: build-scan
+    if: ${{ !cancelled() && needs.build-scan.outputs.sarif-artifact-id != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the SARIF report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.build-scan.outputs.sarif-artifact-id }}
+          path: ${{ runner.temp }}/sarif
+          merge-multiple: true
+
+      - name: Upload to the Security tab
+        id: upload
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/sarif/trivy-image.sarif
+          category: container-image/${{ inputs.image }}
+
       - name: Summary
-        run: echo "Imagen publicada → \`${{ steps.tags.outputs.image-ref }}\`" >> "$GITHUB_STEP_SUMMARY"
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          if [[ "$OUTCOME" == "success" ]]; then
+            echo "Escaneo de la imagen publicado en la pestaña Security (code scanning)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::No se pudo subir el SARIF a la pestaña Security. El caller tiene que conceder security-events: write (y el repo privado necesita GitHub Code Security). El informe sigue en el artefacto trivy-image-sarif."
+            echo "El SARIF no se subió a la pestaña Security: queda en el artefacto \`trivy-image-sarif\` de este run." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  publish:
+    name: Publish approved image
+    needs: build-scan
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    outputs:
+      image-ref: ${{ steps.publish-approved.outputs.image-ref }}
+    steps:
+      - name: Download the approved archive
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.build-scan.outputs.artifact-id }}
+          path: ${{ runner.temp }}/approved-image
+          merge-multiple: true
+
+      - name: Verify the archive hash and load the approved image
+        shell: bash
+        env:
+          ARCHIVE_SHA: ${{ needs.build-scan.outputs.archive-sha }}
+          IMAGE_ID: ${{ needs.build-scan.outputs.image-id }}
+        run: |
+          archive="$RUNNER_TEMP/approved-image/vankoo-image.tar"
+          [[ "$ARCHIVE_SHA" =~ ^[a-f0-9]{64}$ && "$IMAGE_ID" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "$ARCHIVE_SHA  $archive" | sha256sum --check
+          docker image load --input "$archive"
+          [[ "$(docker image inspect --format '{{.Id}}' "$IMAGE_ID")" == "$IMAGE_ID" ]]
+
+      - name: Azure login (OIDC)
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Registry login
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: az acr login --name "$REGISTRY"
+
+      - name: Publish approved image and capture its immutable digest
+        id: publish-approved
+        shell: bash
+        env:
+          IMAGE_ID: ${{ needs.build-scan.outputs.image-id }}
+          REPOSITORY: ${{ inputs.registry }}.azurecr.io/${{ inputs.image }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          sha_tag="$REPOSITORY:${GITHUB_SHA::7}"
+          env_tag="$REPOSITORY:$ENVIRONMENT"
+          docker tag "$IMAGE_ID" "$sha_tag"
+          docker tag "$IMAGE_ID" "$env_tag"
+          push_log="$(mktemp)"
+          trap 'rm -f "$push_log"' EXIT
+          docker push --platform linux/amd64 "$sha_tag" | tee "$push_log"
+          digest="$(sed -nE 's/^[^[:space:]]+: digest: (sha256:[a-f0-9]{64}) size: [0-9]+$/\1/p' "$push_log")"
+          if [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::Cannot identify the immutable digest for the scanned image."
+            exit 1
+          fi
+          image_ref="$REPOSITORY@$digest"
+          remote_id="$(docker manifest inspect "$image_ref" | jq -er '.config.digest')"
+          if [[ "$remote_id" != "$IMAGE_ID" ]]; then
+            echo "::error::The published manifest does not match the scanned image ID."
+            exit 1
+          fi
+          docker push --platform linux/amd64 "$env_tag"
+          echo "image-ref=$image_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        env:
+          DEPLOY_IMAGE: ${{ steps.publish-approved.outputs.image-ref }}
+        run: echo "Imagen escaneada y publicada → \`$DEPLOY_IMAGE\`" >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     name: Deploy to ${{ inputs.environment }}
     needs: publish
     if: inputs.deploy-to-container-apps
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
     environment: ${{ inputs.environment }}
     # Un despliegue por app a la vez; el siguiente espera en lugar de cancelar.
     concurrency:
@@ -163,7 +466,7 @@ jobs:
       IMAGE: ${{ needs.publish.outputs.image-ref }}
     steps:
       - name: Azure login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}

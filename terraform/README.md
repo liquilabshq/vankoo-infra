@@ -45,7 +45,10 @@ su pipeline, que construye la imagen, la publica en el registro y la despliega
 repo). Por eso sus Container Apps llevan `ignore_changes` sobre la imagen:
 Terraform la pone al crearlas y después no la toca. El pipeline entra en Azure
 con OIDC, como la identidad administrada `vankoo-github-ci`, que solo puede
-subir imágenes al registro y actualizar esas apps.
+subir imágenes al registro y actualizar esas apps. Antes de publicar, el
+pipeline escanea la imagen con Trivy y la frena si trae un CRITICAL con arreglo
+que no esté entre los riesgos aceptados
+(ver [docs/escaneo-de-imagenes.md](../docs/escaneo-de-imagenes.md)).
 
 `--env-file` toma del `.env` solo las credenciales de los dos buckets de S3, que
 son distintos y pueden ser de cuentas de AWS distintas:
