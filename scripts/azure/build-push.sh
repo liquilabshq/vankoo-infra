@@ -15,6 +15,7 @@ SERVICES=(
   "api-gateway|vankoo-api-gateway|Dockerfile"
   "iam-service|vankoo-iam-service|Dockerfile"
   "invoicing-service|vankoo-invoicing-service|LiquiLabs.Vankoo.Invoicing/Dockerfile"
+  "profile-service|vankoo-profile-service|Dockerfile"
 )
 
 tf_init base

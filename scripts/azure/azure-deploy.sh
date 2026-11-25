@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # Enciende, actualiza o reanuda Vankoo en Azure: crea el estado si falta,
-# aplica las capas core, base y data, construye y sube las imágenes y aplica la
-# capa apps. Si algo estaba detenido con azure-stop.sh, lo vuelve a arrancar.
+# aplica las capas core, base, data y messaging, construye y sube las imágenes
+# y aplica la capa apps. Si algo estaba detenido con azure-stop.sh, lo vuelve a
+# arrancar (y vuelve a crear el Event Hubs que azure-stop.sh borró).
 #
 # Uso: scripts/azure/azure-deploy.sh [--yes] [--skip-build] [--env-file <ruta>]
 #   --yes              no pide confirmación en cada terraform apply
 #   --skip-build       reutiliza las imágenes de images.auto.tfvars
-#   --env-file <ruta>  toma las credenciales de S3 (AWS_*) de ese .env
+#   --env-file <ruta>  toma las credenciales de S3 (AWS_* y PROFILE_AWS_*) de ese .env
 #
-# Necesita las credenciales del bucket de S3 de Invoicing, o con --env-file o
-# en el entorno:
+# Necesita las credenciales de los dos buckets de S3, el de Invoicing (AWS_*) y el
+# de Profile (PROFILE_AWS_*), o con --env-file o en el entorno:
 #   export TF_VAR_aws_region=...            TF_VAR_aws_s3_bucket=...
 #   export TF_VAR_aws_access_key_id=...     TF_VAR_aws_secret_access_key=...
+#   export TF_VAR_profile_aws_region=...    TF_VAR_profile_aws_s3_bucket=...
+#   export TF_VAR_profile_aws_access_key_id=...  TF_VAR_profile_aws_secret_access_key=...
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 YES=()
@@ -31,13 +34,16 @@ done
 
 require_tools az terraform docker git
 
-for var in TF_VAR_aws_region TF_VAR_aws_s3_bucket TF_VAR_aws_access_key_id TF_VAR_aws_secret_access_key; do
-  [[ -n "${!var:-}" ]] || die "Falta $var (credenciales del bucket de S3 de Invoicing). Ver la cabecera de este script."
+for var in TF_VAR_aws_region TF_VAR_aws_s3_bucket TF_VAR_aws_access_key_id TF_VAR_aws_secret_access_key \
+           TF_VAR_profile_aws_region TF_VAR_profile_aws_s3_bucket \
+           TF_VAR_profile_aws_access_key_id TF_VAR_profile_aws_secret_access_key; do
+  [[ -n "${!var:-}" ]] || die "Falta $var (credenciales de S3 de Invoicing o de Profile). Ver la cabecera de este script."
 done
 
 setup_terraform_env
 check_providers Microsoft.App Microsoft.ContainerRegistry Microsoft.OperationalInsights \
-  Microsoft.DBforPostgreSQL Microsoft.DocumentDB Microsoft.CognitiveServices Microsoft.Storage
+  Microsoft.DBforPostgreSQL Microsoft.DocumentDB Microsoft.CognitiveServices Microsoft.Storage \
+  Microsoft.EventHub
 
 "$SCRIPT_DIR/bootstrap-state.sh"
 
@@ -48,6 +54,8 @@ tf_apply base ${YES[@]+"${YES[@]}"}
 log "Reanudando lo que estuviera detenido"
 start_postgres_servers
 tf_apply data ${YES[@]+"${YES[@]}"}
+# El broker de eventos va antes que las apps: les da su dirección y sus claves.
+tf_apply messaging ${YES[@]+"${YES[@]}"}
 
 if [[ "$SKIP_BUILD" == true ]]; then
   [[ -f "$TF_DIR/apps/images.auto.tfvars" ]] || die "No hay images.auto.tfvars: ejecuta sin --skip-build."
@@ -60,6 +68,18 @@ fi
 start_container_apps
 tf_apply apps ${YES[@]+"${YES[@]}"}
 
+# Capa opcional: la función de verificación de DNI. Va al final y no bloquea: si falla
+# (proveedores sin registrar, cuota del plan Flex, política de regiones...), el resto de
+# Vankoo ya está desplegado y solo se avisa. No cuesta parada: se aplica, pero no se
+# destruye al apagar (azure-destroy.sh --all la borra).
+if (check_providers Microsoft.Web Microsoft.Insights && tf_apply functions ${YES[@]+"${YES[@]}"}); then
+  FUNCTIONS_URL="$(tf_output functions verify_dni_url)" || FUNCTIONS_URL="(sin URL)"
+else
+  FUNCTIONS_URL="(no desplegada)"
+  warn "La capa functions no se aplicó; el resto de Vankoo sí. Para reintentarla: source scripts/azure/lib.sh && setup_terraform_env && tf_apply functions"
+fi
+
 log "Vankoo está en pie"
 echo "Gateway: $(tf_output apps gateway_url)"
 echo "Scalar:  $(tf_output apps gateway_scalar_url)"
+echo "DNI:     $FUNCTIONS_URL"

@@ -1,6 +1,7 @@
 # Capa apps: una Container App por servicio. Solo el gateway acepta tráfico de
 # internet; el resto tiene ingress interno y el gateway los alcanza por el DNS
-# del environment (http://<nombre-de-la-app>). Fase 1: gateway, IAM e Invoicing.
+# del environment (http://<nombre-de-la-app>). Fase 1: gateway, IAM, Invoicing y
+# Profile.
 
 data "azurerm_resource_group" "vankoo" {
   name = var.resource_group_name
@@ -36,16 +37,49 @@ data "terraform_remote_state" "data" {
   }
 }
 
+# azure-stop.sh destruye la capa messaging, y su estado queda sin salidas. Los
+# valores por defecto dejan que azure-destroy.sh destruya esta capa igualmente;
+# azure-deploy.sh siempre vuelve a crear messaging antes de aplicar apps.
+data "terraform_remote_state" "messaging" {
+  backend = "azurerm"
+  config = {
+    resource_group_name  = var.resource_group_name
+    storage_account_name = var.tfstate_storage_account
+    container_name       = "tfstate"
+    key                  = "messaging.tfstate"
+  }
+  defaults = {
+    kafka_bootstrap_server   = ""
+    kafka_connection_strings = {}
+  }
+}
+
 locals {
   core = data.terraform_remote_state.core.outputs
   base = data.terraform_remote_state.base.outputs
   db   = data.terraform_remote_state.data.outputs
+  msg  = data.terraform_remote_state.messaging.outputs
+
+  # Event Hubs se usa con el cliente de Kafka de siempre: TLS, mecanismo PLAIN,
+  # el usuario literal $ConnectionString y, como contraseña, la cadena de
+  # conexión de la regla del servicio (un secreto de cada Container App).
+  kafka_bootstrap_server = local.msg.kafka_bootstrap_server
+  kafka_sasl_username    = "$ConnectionString"
 
   domain = local.core.environment_default_domain
 
   gateway_app   = "vankoo-api-gateway"
   iam_app       = "vankoo-iam-service"
   invoicing_app = "vankoo-invoicing-service"
+  profile_app   = "vankoo-profile-service"
+
+  # En el grupo también hay apps que no gestiona Terraform (el Investment que se
+  # desplegó a mano). azure-stop.sh y azure-deploy.sh solo detienen y arrancan las
+  # que llevan esta etiqueta.
+  managed_tags = { "vankoo-managed-by" = "terraform" }
+
+  # La verificación automática del DNI se enciende al pasar la URL de la función.
+  dni_verification_enabled = var.dni_verification_url != ""
 }
 
 # Clave de firma de los JWT: la generan Terraform y la comparten IAM (firma) y
@@ -63,6 +97,7 @@ resource "azurerm_container_app" "iam" {
   container_app_environment_id = local.core.environment_id
   revision_mode                = "Single"
   workload_profile_name        = "Consumption"
+  tags                         = local.managed_tags
 
   registry {
     server               = local.base.acr_login_server
@@ -83,6 +118,11 @@ resource "azurerm_container_app" "iam" {
   secret {
     name  = "iam-db-password"
     value = local.db.iam_db_password
+  }
+
+  secret {
+    name  = "kafka-connection-string"
+    value = lookup(local.msg.kafka_connection_strings, "iam", "")
   }
 
   ingress {
@@ -146,6 +186,24 @@ resource "azurerm_container_app" "iam" {
         name  = "IAM_GATEWAY_HOST"
         value = "${local.gateway_app}.${local.domain}"
       }
+      # Kafka contra Azure Event Hubs (capa messaging). KAFKA_ENABLED activa el
+      # publicador de eventos del perfil azure (vankoo.events.enabled).
+      env {
+        name  = "KAFKA_ENABLED"
+        value = "true"
+      }
+      env {
+        name  = "KAFKA_BROKERS"
+        value = local.kafka_bootstrap_server
+      }
+      env {
+        name  = "KAFKA_SASL_USERNAME"
+        value = local.kafka_sasl_username
+      }
+      env {
+        name        = "KAFKA_SASL_PASSWORD"
+        secret_name = "kafka-connection-string"
+      }
 
       # Spring Boot tarda en arrancar: la sonda de arranque le da hasta 5 min
       # antes de que empiecen a contar las otras dos.
@@ -189,6 +247,7 @@ resource "azurerm_container_app" "invoicing" {
   container_app_environment_id = local.core.environment_id
   revision_mode                = "Single"
   workload_profile_name        = "Consumption"
+  tags                         = local.managed_tags
 
   registry {
     server               = local.base.acr_login_server
@@ -219,6 +278,11 @@ resource "azurerm_container_app" "invoicing" {
   secret {
     name  = "aws-secret-access-key"
     value = var.aws_secret_access_key
+  }
+
+  secret {
+    name  = "kafka-connection-string"
+    value = lookup(local.msg.kafka_connection_strings, "invoicing", "")
   }
 
   ingress {
@@ -284,6 +348,46 @@ resource "azurerm_container_app" "invoicing" {
         secret_name = "aws-secret-access-key"
       }
       # Sin discovery server en Azure: el gateway llega por el DNS del environment.
+      # Kafka contra Azure Event Hubs (capa messaging). Ver docs/ARCHITECTURE.md de
+      # vankoo-invoicing-service, «Conexión con Kafka».
+      env {
+        name  = "KafkaSettings__BootstrapServers"
+        value = local.kafka_bootstrap_server
+      }
+      env {
+        name  = "KafkaSettings__SecurityProtocol"
+        value = "SaslSsl"
+      }
+      env {
+        name  = "KafkaSettings__SaslMechanism"
+        value = "Plain"
+      }
+      env {
+        name  = "KafkaSettings__SaslUsername"
+        value = local.kafka_sasl_username
+      }
+      env {
+        name        = "KafkaSettings__SaslPassword"
+        secret_name = "kafka-connection-string"
+      }
+      # Event Hubs exige más de 20 s por petición; el mensaje debe poder esperar más que eso.
+      env {
+        name  = "KafkaSettings__RequestTimeoutMs"
+        value = "60000"
+      }
+      env {
+        name  = "KafkaSettings__MessageTimeoutMs"
+        value = "120000"
+      }
+      # Azure corta las conexiones inactivas a los 240 s.
+      env {
+        name  = "KafkaSettings__MetadataMaxAgeMs"
+        value = "180000"
+      }
+      env {
+        name  = "KafkaSettings__SocketKeepaliveEnable"
+        value = "true"
+      }
       env {
         name  = "Eureka__Client__Enabled"
         value = "false"
@@ -305,16 +409,219 @@ resource "azurerm_container_app" "invoicing" {
       readiness_probe {
         transport = "HTTP"
         # Por defecto Container Apps espera 1 s, y el chequeo de readiness
-        # consulta dependencias externas: con 1 s caducaba y la app nunca
-        # recibía tráfico.
-        timeout = 5
+        # consulta dependencias externas (MongoDB, S3 y Kafka, este con hasta
+        # 5 s de espera): con 1 s caducaba y la app nunca recibía tráfico.
+        timeout = 10
         port    = 8080
-        # PARCHE TEMPORAL (fase 1, sin Kafka en Azure): /health/ready incluye el
-        # chequeo de Kafka, que sin broker no falla rápido sino que espera hasta
-        # 60 s (MessageTimeout del productor). La sonda caduca siempre y la app
-        # nunca recibe tráfico. Volver a "/health/ready" cuando Kafka esté
-        # desplegado en el environment (fase 2).
-        path = "/health/live"
+        path    = "/health/ready"
+      }
+    }
+  }
+
+  # Igual que en IAM: la imagen la gestiona el pipeline del repo.
+  lifecycle {
+    ignore_changes = [template[0].container[0].image]
+  }
+}
+
+# --- Profile Service ----------------------------------------------------------
+
+resource "azurerm_container_app" "profile" {
+  name                         = local.profile_app
+  resource_group_name          = data.azurerm_resource_group.vankoo.name
+  container_app_environment_id = local.core.environment_id
+  revision_mode                = "Single"
+  workload_profile_name        = "Consumption"
+  tags                         = local.managed_tags
+
+  registry {
+    server               = local.base.acr_login_server
+    username             = local.base.acr_admin_username
+    password_secret_name = "acr-password"
+  }
+
+  secret {
+    name  = "acr-password"
+    value = local.base.acr_admin_password
+  }
+
+  secret {
+    name  = "profile-db-password"
+    value = local.db.profile_db_password
+  }
+
+  # Bucket y credenciales de S3 propios de Profile (no los de Invoicing).
+  secret {
+    name  = "aws-access-key-id"
+    value = var.profile_aws_access_key_id
+  }
+
+  secret {
+    name  = "aws-secret-access-key"
+    value = var.profile_aws_secret_access_key
+  }
+
+  secret {
+    name  = "kafka-connection-string"
+    value = lookup(local.msg.kafka_connection_strings, "profile", "")
+  }
+
+  # Container Apps no admite secretos vacíos: solo se crea si hay clave.
+  dynamic "secret" {
+    for_each = var.dni_verification_key != "" ? [1] : []
+    content {
+      name  = "dni-verification-key"
+      value = var.dni_verification_key
+    }
+  }
+
+  ingress {
+    external_enabled = false
+    target_port      = 3000
+
+    traffic_weight {
+      latest_revision = true
+      percentage      = 100
+    }
+  }
+
+  template {
+    min_replicas = var.min_replicas
+    max_replicas = 1
+
+    container {
+      name   = "profile-service"
+      image  = var.images["profile-service"]
+      cpu    = 0.25
+      memory = "0.5Gi"
+
+      env {
+        name  = "PORT"
+        value = "3000"
+      }
+      env {
+        name  = "PROFILE_DB_HOST"
+        value = local.db.profile_db_host
+      }
+      env {
+        name  = "PROFILE_DB_PORT"
+        value = "5432"
+      }
+      env {
+        name  = "PROFILE_DB_USER"
+        value = local.db.profile_db_username
+      }
+      env {
+        name        = "PROFILE_DB_PASS"
+        secret_name = "profile-db-password"
+      }
+      env {
+        name  = "PROFILE_DB_NAME"
+        value = local.db.profile_db_name
+      }
+      # Azure Database for PostgreSQL exige TLS.
+      env {
+        name  = "PROFILE_DB_SSL"
+        value = "true"
+      }
+      # Kafka contra Azure Event Hubs (capa messaging).
+      env {
+        name  = "KAFKA_ENABLED"
+        value = "true"
+      }
+      env {
+        name  = "KAFKA_BROKERS"
+        value = local.kafka_bootstrap_server
+      }
+      env {
+        name  = "KAFKA_SSL"
+        value = "true"
+      }
+      env {
+        name  = "KAFKA_SASL_MECHANISM"
+        value = "plain"
+      }
+      env {
+        name  = "KAFKA_SASL_USERNAME"
+        value = local.kafka_sasl_username
+      }
+      env {
+        name        = "KAFKA_SASL_PASSWORD"
+        secret_name = "kafka-connection-string"
+      }
+      # Sin discovery server en Azure: el gateway llega por el DNS del environment.
+      env {
+        name  = "EUREKA_ENABLED"
+        value = "false"
+      }
+      env {
+        name  = "STORAGE_PROVIDER"
+        value = "s3"
+      }
+      env {
+        name  = "AWS_REGION"
+        value = var.profile_aws_region
+      }
+      env {
+        name  = "AWS_S3_BUCKET"
+        value = var.profile_aws_s3_bucket
+      }
+      env {
+        name        = "AWS_ACCESS_KEY_ID"
+        secret_name = "aws-access-key-id"
+      }
+      env {
+        name        = "AWS_SECRET_ACCESS_KEY"
+        secret_name = "aws-secret-access-key"
+      }
+      # Servidores que Profile anuncia en su OpenAPI (/openapi/v1.json): el
+      # «Send» de Scalar va por el gateway, que valida el JWT y pone X-User-Id.
+      env {
+        name  = "DOCUMENTATION_GATEWAY_URL"
+        value = "https://${local.gateway_app}.${local.domain}/profile"
+      }
+      env {
+        name  = "DOCUMENTATION_SERVER_URL"
+        value = "https://${local.profile_app}.internal.${local.domain}"
+      }
+      env {
+        name  = "DNI_VERIFICATION_ENABLED"
+        value = tostring(local.dni_verification_enabled)
+      }
+      dynamic "env" {
+        for_each = local.dni_verification_enabled ? [1] : []
+        content {
+          name  = "DNI_VERIFICATION_URL"
+          value = var.dni_verification_url
+        }
+      }
+      dynamic "env" {
+        for_each = var.dni_verification_key != "" ? [1] : []
+        content {
+          name        = "DNI_VERIFICATION_KEY"
+          secret_name = "dni-verification-key"
+        }
+      }
+
+      # Profile no tiene endpoint de salud: GET /api/v1 (el «Hello» de
+      # AppController) responde en cuanto Nest escucha. Las rutas son /api/v1/...
+      startup_probe {
+        transport               = "HTTP"
+        port                    = 3000
+        path                    = "/api/v1"
+        interval_seconds        = 10
+        failure_count_threshold = 30
+      }
+      liveness_probe {
+        transport = "HTTP"
+        port      = 3000
+        path      = "/api/v1"
+      }
+      readiness_probe {
+        transport = "HTTP"
+        timeout   = 5
+        port      = 3000
+        path      = "/api/v1"
       }
     }
   }
@@ -333,6 +640,7 @@ resource "azurerm_container_app" "gateway" {
   container_app_environment_id = local.core.environment_id
   revision_mode                = "Single"
   workload_profile_name        = "Consumption"
+  tags                         = local.managed_tags
 
   registry {
     server               = local.base.acr_login_server
@@ -391,6 +699,16 @@ resource "azurerm_container_app" "gateway" {
       env {
         name  = "INVOICING_SERVICE_URI"
         value = "http://${azurerm_container_app.invoicing.name}"
+      }
+      env {
+        name  = "PROFILE_SERVICE_URI"
+        value = "http://${azurerm_container_app.profile.name}"
+      }
+      # Investment se desplegó a mano, fuera de Terraform: el gateway solo apunta a
+      # su Container App por el nombre, sin gestionarla.
+      env {
+        name  = "INVESTMENT_SERVICE_URI"
+        value = "http://vankoo-investment-service"
       }
 
       startup_probe {

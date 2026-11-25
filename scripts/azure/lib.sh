@@ -12,6 +12,12 @@ PROJECTS_DIR="$(cd "$INFRA_DIR/.." && pwd)"
 VANKOO_RG="${VANKOO_RG:-liquilabs-vankoo}"
 VANKOO_LOCATION="${VANKOO_LOCATION:-centralus}"
 
+# En Windows (Git Bash) az termina cada línea con \r\n. Los nombres e ids que se
+# leen con $(az ...) llevarían un \r invisible al final, y Azure rechaza la URL
+# con «400 Invalid URL». Se quita aquí, una vez para todos los scripts; con
+# pipefail el código de salida sigue siendo el de az. En Mac y Linux no cambia nada.
+az() { command az "$@" | tr -d '\r'; }
+
 log()  { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m[aviso] %s\033[0m\n' "$*" >&2; }
 die()  { printf '\033[1;31m[error] %s\033[0m\n' "$*" >&2; exit 1; }
@@ -84,8 +90,11 @@ check_providers() {
 # la API de Azure directamente.
 CONTAINERAPPS_API="2024-03-01"
 
+# Solo las apps que gestiona Terraform (etiqueta vankoo-managed-by = terraform).
+# En el grupo hay otras, como el Investment que se desplegó a mano, que estos
+# scripts no deben detener ni arrancar.
 vankoo_container_apps() {
-  az containerapp list --only-show-errors -g "$VANKOO_RG" --query "[?starts_with(name,'vankoo-')].name" -o tsv 2>/dev/null
+  az containerapp list --only-show-errors -g "$VANKOO_RG" --query "[?tags.\"vankoo-managed-by\"=='terraform'].name" -o tsv 2>/dev/null
 }
 
 vankoo_postgres_servers() {
@@ -153,16 +162,21 @@ start_postgres_servers() {
 }
 
 # Lee solo las credenciales de S3 de un .env (formato del .env.example) y las
-# exporta como TF_VAR_aws_*. No usa `source`: el .env tiene valores con
-# espacios y < > que romperían el shell. No imprime ningún valor.
+# exporta como TF_VAR_*: AWS_* (bucket de Invoicing) como TF_VAR_aws_* y
+# PROFILE_AWS_* (bucket de Profile) como TF_VAR_profile_aws_*. No usa `source`:
+# el .env tiene valores con espacios y < > que romperían el shell. No imprime
+# ningún valor. Quita el \r por si el .env se guardó con finales de Windows.
 load_aws_from_env_file() {
   local file="$1"
   [[ -f "$file" ]] || die "No existe $file"
   local key tfvar value
   for pair in AWS_REGION:aws_region AWS_S3_BUCKET:aws_s3_bucket \
-              AWS_ACCESS_KEY_ID:aws_access_key_id AWS_SECRET_ACCESS_KEY:aws_secret_access_key; do
+              AWS_ACCESS_KEY_ID:aws_access_key_id AWS_SECRET_ACCESS_KEY:aws_secret_access_key \
+              PROFILE_AWS_REGION:profile_aws_region PROFILE_AWS_S3_BUCKET:profile_aws_s3_bucket \
+              PROFILE_AWS_ACCESS_KEY_ID:profile_aws_access_key_id \
+              PROFILE_AWS_SECRET_ACCESS_KEY:profile_aws_secret_access_key; do
     key="${pair%%:*}"; tfvar="TF_VAR_${pair#*:}"
-    value="$(grep -E "^${key}=" "$file" | tail -1 | cut -d= -f2- | sed -E 's/^["'\'']//; s/["'\'']$//')"
+    value="$(grep -E "^${key}=" "$file" | tail -1 | cut -d= -f2- | tr -d '\r' | sed -E 's/^["'\'']//; s/["'\'']$//')"
     if [[ -z "$value" || "$value" == YOUR_* ]]; then
       die "$key no tiene valor en $file"
     fi

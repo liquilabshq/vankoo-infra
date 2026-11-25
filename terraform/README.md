@@ -15,13 +15,14 @@ después.
 
 ```bash
 scripts/azure/azure-deploy.sh --env-file .env   # crear, actualizar o reanudar
-scripts/azure/azure-stop.sh                     # pausa corta: detiene y conserva los datos
+scripts/azure/azure-stop.sh                     # pausa corta: detiene y conserva los datos (borra el Event Hubs)
 scripts/azure/azure-destroy.sh                  # pausa larga: borra todo, coste 0
 ```
 
 | | `azure-stop.sh` | `azure-destroy.sh` |
 |---|---|---|
 | Datos (usuarios, facturas…) | Se conservan | Se pierden |
+| Event Hubs | Se destruye: se pierden los eventos sin leer | Se destruye |
 | URL del gateway | La misma | La misma |
 | Volver a encender | Un par de minutos | Unos 20 minutos |
 | Coste mientras tanto | El registro (~$5/mes) y el disco de cada PostgreSQL | Nada |
@@ -38,17 +39,23 @@ Para subir una versión nueva del gateway, basta con volver a ejecutar
 `azure-deploy.sh --env-file .env`: reconstruye las imágenes y Terraform solo
 actualiza las apps cuya imagen cambió.
 
-IAM e Invoicing no se actualizan así: cada merge a `develop` de su repo dispara
+IAM, Invoicing y Profile no se actualizan así: cada merge a `develop` de su repo dispara
 su pipeline, que construye la imagen, la publica en el registro y la despliega
 (workflow reutilizable `.github/workflows/deliver-container-app.yml` de este
 repo). Por eso sus Container Apps llevan `ignore_changes` sobre la imagen:
 Terraform la pone al crearlas y después no la toca. El pipeline entra en Azure
 con OIDC, como la identidad administrada `vankoo-github-ci`, que solo puede
-subir imágenes al registro y actualizar esas dos apps.
+subir imágenes al registro y actualizar esas apps.
 
-`--env-file` toma del `.env` solo las credenciales del bucket de S3 de
-Invoicing (`AWS_REGION`, `AWS_S3_BUCKET`, `AWS_ACCESS_KEY_ID`,
-`AWS_SECRET_ACCESS_KEY`). El resto de secretos (contraseñas de las bases de
+`--env-file` toma del `.env` solo las credenciales de los dos buckets de S3, que
+son distintos y pueden ser de cuentas de AWS distintas:
+- **Invoicing:** `AWS_REGION`, `AWS_S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`.
+- **Profile:** `PROFILE_AWS_REGION`, `PROFILE_AWS_S3_BUCKET`, `PROFILE_AWS_ACCESS_KEY_ID`,
+  `PROFILE_AWS_SECRET_ACCESS_KEY`.
+
+Cada `apply` de `apps` vuelve a escribir esos valores en las Container Apps: si
+el `.env` de quien despliega tiene otro bucket, Terraform lo cambiará (revisa el
+plan de Invoicing). El resto de secretos (contraseñas de las bases de
 datos, clave JWT, clave del OCR) los genera Terraform y se los pasa a las apps:
 nadie tiene que copiarlos.
 
@@ -57,7 +64,7 @@ nadie tiene que copiarlos.
 | Script | Cuándo se usa |
 |---|---|
 | `azure-deploy.sh` | A mano: crear, actualizar o reanudar |
-| `azure-stop.sh` | A mano: detener sin borrar |
+| `azure-stop.sh` | A mano: detener sin borrar datos. Solo destruye la capa `messaging` |
 | `azure-destroy.sh` | A mano: borrar todo menos la capa `core`. Con `--all` también la borra (y la URL del gateway cambia) |
 | `build-push.sh` | Lo llama `azure-deploy.sh`. A mano solo para construir y subir imágenes sin aplicar nada |
 | `bootstrap-state.sh` | Lo llama `azure-deploy.sh`. Crea la cuenta del estado la primera vez; si ya existe, no hace nada |
@@ -68,14 +75,63 @@ nadie tiene que copiarlos.
 | Capa | Qué crea | Con `azure-destroy.sh` |
 |---|---|---|
 | `core` | El sufijo de los nombres únicos, el OCR (Document Intelligence F0), el workspace de logs y el Container Apps Environment | Se conserva: sin apps no cuesta nada, y conservar el environment mantiene la URL del gateway |
+| `functions` | La función serverless de verificación de DNI (Azure Functions con plan Flex Consumption, Application Insights) | Se conserva (se destruye con `--all`): parada no cuesta, y así mantiene su URL, su clave y el código publicado |
 | `base` | Registro de imágenes | Se destruye |
-| `data` | Una base de datos por servicio: PostgreSQL de IAM, MongoDB de Invoicing | Se destruye |
+| `data` | Una base de datos por servicio: PostgreSQL de IAM y de Profile, MongoDB de Invoicing | Se destruye |
+| `messaging` | El broker de eventos: un namespace de Azure Event Hubs, un event hub por topic y una regla de acceso por servicio | Se destruye (también con `azure-stop.sh`) |
 | `apps` | Una Container App por servicio | Se destruye |
+
+El código de la función no lo despliega Terraform sino el workflow `deploy.yml` de
+`vankoo-dni-verification-function`; ver `docs/funciones-serverless.md`.
 
 Solo el gateway acepta tráfico de internet. Los servicios tienen ingress interno
 y el gateway los alcanza por el DNS del environment (`http://vankoo-iam-service`):
 en Azure no hay Eureka. El estado de Terraform vive en la cuenta de
 almacenamiento `vankootf…` del mismo grupo, que ningún script borra.
+
+## Mensajería: Azure Event Hubs
+
+En local los servicios se envían eventos por el Kafka del compose. En Azure ese
+papel lo hace la capa `messaging`, un namespace de **Azure Event Hubs** que habla
+el protocolo de Kafka: los servicios usan el mismo cliente y solo cambian la
+dirección y la autenticación.
+
+| Kafka (compose) | Event Hubs (Azure) |
+|---|---|
+| Broker `kafka-broker:9094` | Namespace `vankoo-events-<sufijo>.servicebus.windows.net:9093` |
+| Topic | Event hub, con el mismo nombre |
+| Sin autenticación (PLAINTEXT) | TLS + SASL PLAIN: usuario `$ConnectionString`, contraseña la cadena de conexión |
+| Los topics se crean al publicar | Los crea Terraform: los clientes no pueden (`auto-create-topics: false`) |
+
+- **Nivel Standard, 1 unidad de rendimiento.** Es el más barato con endpoint de
+  Kafka (el Basic no lo tiene) y admite hasta 10 event hubs. Vankoo usa los 10
+  (`locals.topics` de `messaging/main.tf`): siete de eventos y tres colas de
+  mensajes fallidos (DLQ). Un topic más obliga a subir de nivel o a juntar topics.
+- **Una regla de acceso por servicio** (`locals.clients`), con permiso para enviar
+  y escuchar, no para administrar. Su cadena de conexión llega a cada Container
+  App como el secreto `kafka-connection-string`.
+- **Coste.** Cobra por hora aunque no haya tráfico (unidad de rendimiento más
+  endpoint de Kafka, unos 0.12 USD/h en Central US) y no se puede pausar. Por eso
+  `azure-stop.sh` destruye la capa y `azure-deploy.sh` la vuelve a crear con el
+  mismo nombre, antes de la capa `apps`.
+- **Al recrearlo cambian las claves** (no la dirección): `azure-deploy.sh` las
+  vuelve a escribir en las Container Apps al aplicar `apps`.
+- **Retención de un día y una partición por topic.** Basta para una demo y
+  conserva el orden de los eventos de cada topic.
+- Configuración de cliente que pide Event Hubs: `request.timeout.ms` de al menos
+  60000, `metadata.max.age.ms` y `connections.max.idle.ms` por debajo de 240000
+  (Azure cierra las conexiones inactivas a los 4 minutos) y solo compresión
+  `gzip` o ninguna. Ver
+  [Kafka client configurations for Event Hubs](https://learn.microsoft.com/en-us/azure/event-hubs/apache-kafka-configurations).
+
+Servicios conectados: Profile, IAM e Invoicing. Finance, Investment y
+Notification se conectan en las siguientes fases.
+
+- **IAM** (Spring Cloud Stream): `KAFKA_ENABLED`, `KAFKA_BROKERS`,
+  `KAFKA_SASL_USERNAME` y `KAFKA_SASL_PASSWORD`; su perfil `azure` arma el resto.
+- **Invoicing** (Confluent .NET): `KafkaSettings__*`, con los timeouts que pide
+  Event Hubs. Su health check de Kafka pide los metadatos del broker en lugar de
+  publicar en un topic de prueba, porque no queda sitio para uno.
 
 ## Añadir un servicio
 
@@ -94,6 +150,9 @@ almacenamiento `vankootf…` del mismo grupo, que ningún script borra.
    la organización y del repo (`gh api orgs/liquilabshq --jq .id` y
    `gh api repos/liquilabshq/<repo> --jq .id`); sin ellos, Azure lo rechaza con
    `AADSTS700213`.
+6. Si publica o consume eventos: sus topics en `locals.topics` y su nombre en
+   `locals.clients` de `messaging/main.tf`, y en su Container App el secreto
+   `kafka-connection-string` y las variables de Kafka (copiar las de Profile).
 
 Si el servicio guarda datos solo dentro de su contenedor (Kafka, Axon u Oracle
 sin disco persistente), añade a su Container App
@@ -107,7 +166,19 @@ datos se perderán antes de detener nada.
   `azurerm` no tiene ese campo.
 - **Central US a veces no tiene capacidad** para environments nuevos
   (`ManagedEnvironmentCapacityHeavyUsageError`). Reintentar suele bastar.
-- **Invoicing usa `/health/live` como sonda de readiness** mientras no haya
-  Kafka en Azure: su chequeo de Kafka espera 60 s sin broker. Volver a
-  `/health/ready` al desplegar Kafka.
+- **Un topic que no está en `messaging/main.tf` no existe en Azure.** Event Hubs
+  no crea topics desde los clientes: un consumidor de un topic que falta no
+  recibe nada y un productor falla. Añádelo a `locals.topics` y vuelve a desplegar.
+- **Tras un `azure-stop.sh`, no apliques `apps` a mano sin antes `messaging`:**
+  sin el namespace, las apps recibirían una dirección y una clave vacías.
+  `azure-deploy.sh` ya lo hace en orden.
+- **No todo lo que hay en el grupo es de Terraform.** Investment
+  (`vankoo-investment-service` y su VM de Oracle) se desplegó a mano. Terraform no
+  lo gestiona: el gateway solo apunta a su app por el nombre
+  (`INVESTMENT_SERVICE_URI`), y `azure-stop.sh` y `azure-deploy.sh` solo detienen y
+  arrancan las apps con la etiqueta `vankoo-managed-by = terraform`.
+- **Profile usa `GET /api/v1` como sonda**: aún no tiene endpoint de salud.
+- **La sonda de readiness de Invoicing espera 10 s**: `/health/ready` consulta
+  MongoDB, S3 y Kafka, y el de Kafka puede tardar hasta 5 s si el broker no
+  responde.
 - Si cambias los providers de una capa, ejecuta `terraform init -upgrade` en ella.
