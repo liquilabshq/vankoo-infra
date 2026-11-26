@@ -18,14 +18,17 @@ require_tools az terraform kubectl helm
 setup_terraform_env
 check_providers Microsoft.ContainerService
 
-# La capa aks lee core (sufijo) y base (ACR); si no existen, primero el
-# despliegue de Container Apps (azure-deploy.sh crea las dos).
-tf_apply aks ${YES[@]+"${YES[@]}"}
-
-if [[ "$(aks_power_state)" == "Stopped" ]]; then
+# Si el clúster ya existe y está pausado, hay que arrancarlo ANTES del apply:
+# con el clúster detenido Azure rechaza cualquier cambio (OperationNotAllowed).
+tf_init aks
+if aks_name >/dev/null 2>&1 && [[ "$(aks_power_state)" == "Stopped" ]]; then
   log "El clúster estaba detenido: arrancándolo (unos minutos)"
   az aks start -g "$VANKOO_RG" -n "$(aks_name)" --only-show-errors
 fi
+
+# La capa aks lee core (sufijo) y base (ACR); si no existen, primero el
+# despliegue de Container Apps (azure-deploy.sh crea las dos).
+tf_apply aks ${YES[@]+"${YES[@]}"}
 
 aks_credentials
 
