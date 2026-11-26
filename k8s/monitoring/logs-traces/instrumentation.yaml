@@ -48,7 +48,8 @@ spec:
       # fs, dns y net generan cientos de spans por petición sin valor para la demo.
       - name: OTEL_NODE_DISABLED_INSTRUMENTATIONS
         value: fs,dns,net
-    resources:
+    # En v1alpha1 solo Java usa «resources»; Node, Python y .NET, «resourceRequirements».
+    resourceRequirements:
       requests: {cpu: 10m, memory: 32Mi}
       limits: {memory: 128Mi}
   python:
@@ -57,13 +58,15 @@ spec:
         value: http/protobuf
       - name: OTEL_PYTHON_EXCLUDED_URLS
         value: "health,health/ready"
-    resources:
+    # En v1alpha1 solo Java usa «resources»; Node, Python y .NET, «resourceRequirements».
+    resourceRequirements:
       requests: {cpu: 10m, memory: 32Mi}
       limits: {memory: 64Mi}
   dotnet:
     env:
       - name: OTEL_EXPORTER_OTLP_PROTOCOL
         value: http/protobuf
-    resources:
+    # En v1alpha1 solo Java usa «resources»; Node, Python y .NET, «resourceRequirements».
+    resourceRequirements:
       requests: {cpu: 10m, memory: 32Mi}
       limits: {memory: 128Mi}

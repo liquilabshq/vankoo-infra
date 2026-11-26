@@ -61,9 +61,13 @@ singleBinary:
   extraVolumeMounts:
     - name: data
       mountPath: /var/loki
+  # GOMEMLIMIT hace que el recolector de Go trabaje antes de llegar al límite.
   resources:
     requests: {cpu: 50m, memory: 192Mi}
     limits: {memory: 512Mi}
+  extraEnv:
+    - name: GOMEMLIMIT
+      value: 400MiB
 
 # Reglas de alerta de logs desde ConfigMaps (k8s/monitoring/logs-traces/loki-rules.yaml).
 sidecar:
@@ -72,9 +76,10 @@ sidecar:
     label: loki_rule
     folder: /rules/fake
     searchNamespace: [monitoring]
+  # Con 64 Mi el sidecar (Python) moría por OOM al listar los ConfigMaps (prueba en kind).
   resources:
-    requests: {cpu: 5m, memory: 32Mi}
-    limits: {memory: 64Mi}
+    requests: {cpu: 5m, memory: 64Mi}
+    limits: {memory: 128Mi}
 
 # Componentes del modo distribuido y extras que no se usan en SingleBinary.
 backend: {replicas: 0}

@@ -7,6 +7,11 @@ prometheus:
     enableRemoteWriteReceiver: true
 
 grafana:
+  # Con las fuentes Loki y Tempo y sus dashboards, Grafana no cabe en los 256 Mi de
+  # values.yaml: en la prueba en kind la mataba el OOM killer al arrancar.
+  resources:
+    requests: {cpu: 20m, memory: 192Mi}
+    limits: {memory: 512Mi}
   # Prometheus y Alertmanager los define el chart (uid prometheus y alertmanager).
   # Loki y Tempo van enlazados entre sí: de una línea de log con trace_id se abre
   # la traza, y de un span se abren los logs del mismo servicio en ese momento.
