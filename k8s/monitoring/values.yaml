@@ -28,9 +28,10 @@ alertmanager:
       limits: {memory: 128Mi}
 
 grafana:
+  # 256Mi no alcanzaba: Grafana se reiniciaba por OOMKilled al abrir el dashboard.
   resources:
-    requests: {cpu: 20m, memory: 96Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 20m, memory: 128Mi}
+    limits: {memory: 512Mi}
   # Los dashboards de Vankoo se cargan desde ConfigMaps con esta etiqueta
   # (k8s/monitoring/dashboards).
   sidecar:
