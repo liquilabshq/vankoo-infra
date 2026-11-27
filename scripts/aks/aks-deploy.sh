@@ -54,7 +54,14 @@ from_env() {
 email_provider=smtp
 mail_from="Vankoo <no-reply@vankoo.dev>"
 acs_connection_string=""
-if tf_init email >/dev/null 2>&1 && acs_connection_string="$(tf_output email connection_string 2>/dev/null)" \
+if [[ -n "${AKS_ACS_NAME:-}" ]]; then
+  # Recursos creados fuera de Terraform (otra suscripción): AKS_ACS_NAME y AKS_EMAIL_SERVICE_NAME.
+  acs_connection_string="$(az communication list-key -g "$VANKOO_RG" -n "$AKS_ACS_NAME" --query primaryConnectionString -o tsv)"
+  sender_domain="$(az communication email domain show -g "$VANKOO_RG" --email-service-name "$AKS_EMAIL_SERVICE_NAME" \
+    -n AzureManagedDomain --query fromSenderDomain -o tsv 2>/dev/null)"
+  email_provider=acs
+  mail_from="Vankoo <DoNotReply@$sender_domain>"
+elif tf_init email >/dev/null 2>&1 && acs_connection_string="$(tf_output email connection_string 2>/dev/null)" \
     && [[ -n "$acs_connection_string" ]]; then
   email_provider=acs
   mail_from="Vankoo <$(tf_output email sender_address)>"
@@ -79,7 +86,15 @@ push_topic_secret="$(env_value "$ENV_FILE" NOTIFICATION_PUSH_TOPIC_SECRET)"
 # KYC del inversionista: verificación automática del DNI con la función serverless de la
 # capa terraform/functions, si existe y está encendida; si no, revisión manual.
 dni_enabled=false; dni_url=""; dni_key=""
-if tf_init functions >/dev/null 2>&1 && dni_url="$(tf_output functions verify_dni_url 2>/dev/null)" \
+if [[ -n "${AKS_DNI_APP:-}" ]]; then
+  # Función creada fuera de Terraform (otra suscripción).
+  dni_app="$AKS_DNI_APP"
+  # En Flex Consumption, `az functionapp show` no trae el host: se lee del recurso.
+  dni_url="https://$(az resource show -g "$VANKOO_RG" -n "$dni_app" --resource-type Microsoft.Web/sites \
+    --query properties.defaultHostName -o tsv)/api/verify-dni"
+  dni_key="$(az functionapp keys list -g "$VANKOO_RG" -n "$dni_app" --query functionKeys.default -o tsv 2>/dev/null || true)"
+  [[ -n "$dni_key" ]] && dni_enabled=true || warn "No pude leer la clave de la función DNI: el KYC del inversionista queda manual"
+elif tf_init functions >/dev/null 2>&1 && dni_url="$(tf_output functions verify_dni_url 2>/dev/null)" \
     && [[ -n "$dni_url" ]]; then
   dni_app="$(tf_output functions function_app_name 2>/dev/null)"
   dni_key="$(az functionapp keys list -g "$VANKOO_RG" -n "$dni_app" --query functionKeys.default -o tsv 2>/dev/null || true)"
