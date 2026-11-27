@@ -59,12 +59,10 @@ helm upgrade --install argocd argo/argo-cd \
   --version "$ARGOCD_CHART_VERSION" --namespace argocd --create-namespace \
   -f "$INFRA_DIR/k8s/argocd/values.yaml" --wait --timeout 10m >/dev/null
 
-if [[ -n "$REVISION" ]]; then
-  sed "s|targetRevision: .*|targetRevision: $REVISION|" "$INFRA_DIR/k8s/argocd/vankoo-application.yaml" \
-    | kubectl apply -f - >/dev/null
-else
-  kubectl apply -f "$INFRA_DIR/k8s/argocd/vankoo-application.yaml" >/dev/null
-fi
+# AKS_OVERLAY_DIR cambia también la carpeta que sigue Argo CD (otra suscripción).
+app_path="${OVERLAY_DIR#"$INFRA_DIR/"}"
+sed -e "s|targetRevision: .*|targetRevision: ${REVISION:-develop}|" -e "s|path: .*|path: $app_path|" \
+  "$INFRA_DIR/k8s/argocd/vankoo-application.yaml" | kubectl apply -f - >/dev/null
 
 log "Plataforma lista"
 echo "Argo CD:  kubectl -n argocd port-forward svc/argocd-server 8081:80"

@@ -4,7 +4,9 @@
 # Apps y el de AKS conviven y comparten solo el grupo, el ACR y la capa core.
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../azure" && pwd)/lib.sh"
 
-OVERLAY_DIR="$INFRA_DIR/k8s/overlays/azure"
+# Overlay y nombres fijos para un clúster creado fuera de Terraform (otra suscripción):
+#   AKS_OVERLAY_DIR, AKS_CLUSTER_NAME y AKS_ACR_NAME. Sin ellas se usan las salidas de Terraform.
+OVERLAY_DIR="${AKS_OVERLAY_DIR:-$INFRA_DIR/k8s/overlays/azure}"
 NAMESPACE="vankoo"
 INGRESS_NAMESPACE="ingress-nginx"
 # Nombre DNS que Azure da a la IP del ingress-nginx: https://<etiqueta>.<región>.cloudapp.azure.com.
@@ -14,11 +16,13 @@ public_host() { printf '%s.%s.cloudapp.azure.com' "$AKS_DNS_LABEL" "$VANKOO_LOCA
 # Versión fija del chart del Ingress, para que el despliegue sea reproducible.
 INGRESS_CHART_VERSION="${INGRESS_CHART_VERSION:-4.13.3}"
 
-aks_name() { tf_output aks cluster_name; }
+aks_name() {
+  if [[ -n "${AKS_CLUSTER_NAME:-}" ]]; then printf '%s' "$AKS_CLUSTER_NAME"; else tf_output aks cluster_name; fi
+}
 
 # Deja kubectl apuntando al clúster (contexto con el nombre del clúster).
 aks_credentials() {
-  tf_init aks
+  [[ -n "${AKS_CLUSTER_NAME:-}" ]] || tf_init aks
   local name; name="$(aks_name)" || die "No hay clúster: ejecuta scripts/aks/aks-up.sh"
   az aks get-credentials -g "$VANKOO_RG" -n "$name" --overwrite-existing --only-show-errors >/dev/null
   kubectl config use-context "$name" >/dev/null

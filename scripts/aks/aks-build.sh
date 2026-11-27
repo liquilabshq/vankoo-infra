@@ -29,8 +29,12 @@ ALL=(
 
 require_tools az git terraform
 setup_terraform_env
-tf_init base
-ACR="$(tf_output base acr_name)"
+if [[ -n "${AKS_ACR_NAME:-}" ]]; then
+  ACR="$AKS_ACR_NAME"
+else
+  tf_init base
+  ACR="$(tf_output base acr_name)"
+fi
 
 selected=("$@")
 JOBS="${AKS_BUILD_JOBS:-4}"

@@ -1,0 +1,55 @@
+# Despliegue en la suscripción de Anjali (North Central US), creado el 27 nov 2026
+# porque la suscripción de Daniel se quedó sin crédito. Hereda todo del overlay azure
+# y solo cambia el registro de imágenes y el nombre público del Ingress.
+#   VANKOO_RG=liquilabs-vankoo-prod VANKOO_LOCATION=northcentralus \
+#   AKS_CLUSTER_NAME=vankoo-aks-ncus AKS_ACR_NAME=vankooacrncusxjh8 \
+#   AKS_OVERLAY_DIR=$PWD/k8s/overlays/azure-ncus scripts/aks/aks-deploy.sh
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../azure
+
+images:
+  - name: vankooacrqxv9yb.azurecr.io/api-gateway
+    newName: vankooacrncusxjh8.azurecr.io/api-gateway
+  - name: vankooacrqxv9yb.azurecr.io/discovery-server
+    newName: vankooacrncusxjh8.azurecr.io/discovery-server
+  - name: vankooacrqxv9yb.azurecr.io/iam-service
+    newName: vankooacrncusxjh8.azurecr.io/iam-service
+  - name: vankooacrqxv9yb.azurecr.io/profile-service
+    newName: vankooacrncusxjh8.azurecr.io/profile-service
+  - name: vankooacrqxv9yb.azurecr.io/invoicing-service
+    newName: vankooacrncusxjh8.azurecr.io/invoicing-service
+  - name: vankooacrqxv9yb.azurecr.io/investment-service
+    newName: vankooacrncusxjh8.azurecr.io/investment-service
+  - name: vankooacrqxv9yb.azurecr.io/finance-service
+    newName: vankooacrncusxjh8.azurecr.io/finance-service
+  - name: vankooacrqxv9yb.azurecr.io/risk-service
+    newName: vankooacrncusxjh8.azurecr.io/risk-service
+  - name: vankooacrqxv9yb.azurecr.io/notification-service
+    newName: vankooacrncusxjh8.azurecr.io/notification-service
+  - name: vankooacrqxv9yb.azurecr.io/mype-web
+    newName: vankooacrncusxjh8.azurecr.io/mype-web
+
+patches:
+  - target:
+      kind: Ingress
+      name: vankoo
+    patch: |-
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: vankoo-liquilabs.northcentralus.cloudapp.azure.com
+      - op: replace
+        path: /spec/rules/0/host
+        value: vankoo-liquilabs.northcentralus.cloudapp.azure.com
+  - target:
+      kind: Ingress
+      name: finance-stripe-webhook
+    patch: |-
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: vankoo-liquilabs.northcentralus.cloudapp.azure.com
+      - op: replace
+        path: /spec/rules/0/host
+        value: vankoo-liquilabs.northcentralus.cloudapp.azure.com
